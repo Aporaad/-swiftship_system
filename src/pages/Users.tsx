@@ -4,10 +4,12 @@ import { initializeApp } from 'firebase/app';
 import { getAuth, createUserWithEmailAndPassword, signOut } from 'firebase/auth';
 import { db, handleFirestoreError, OperationType, auth } from '../lib/firebase';
 import firebaseConfig from '../../firebase-applet-config.json';
-import { Search, Edit2, X, Plus, UserX, UserCheck, Trash2 } from 'lucide-react';
+import { Search, Edit2, X, Plus, UserX, UserCheck, Trash2, Users as UsersIcon } from 'lucide-react';
 import { useRole } from '../hooks/useRole';
+import { useSettings } from '../context/SettingsContext';
 
 export default function Users() {
+  const { settings, t } = useSettings();
   const [users, setUsers] = useState<any[]>([]);
   const [roles, setRoles] = useState<any[]>([]);
   const { role, hasPermission, profile: currentUserDoc, loading: roleLoading } = useRole();
@@ -138,15 +140,15 @@ export default function Users() {
   const getRoleBadge = (role: string) => {
     switch(role) {
       case 'Admin':
-        return <span className="bg-purple-100 text-purple-700 px-3 py-1 rounded-full text-xs font-bold">صلاحيات كاملة</span>;
+        return <span className="bg-slate-900 dark:bg-slate-800 text-slate-100 px-3 py-1 rounded-xl text-[10px] font-black border border-slate-700 uppercase">{t('admin')}</span>;
       case 'Employee':
-        return <span className="bg-blue-100 text-blue-700 px-3 py-1 rounded-full text-xs font-bold">موظف</span>;
+        return <span className="bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 px-3 py-1 rounded-xl text-[10px] font-black border border-blue-200 dark:border-blue-800">{t('user')}</span>;
       case 'Courier':
-        return <span className="bg-emerald-100 text-emerald-700 px-3 py-1 rounded-full text-xs font-bold">مندوب</span>;
+        return <span className="bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 px-3 py-1 rounded-xl text-[10px] font-black border border-emerald-200 dark:border-emerald-800">{t('courier')}</span>;
       case 'Accountant':
-        return <span className="bg-amber-100 text-amber-700 px-3 py-1 rounded-full text-xs font-bold">محاسب</span>;
+        return <span className="bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 px-3 py-1 rounded-xl text-[10px] font-black border border-amber-200 dark:border-amber-800">{settings.language === 'ar' ? 'محاسب' : 'Accountant'}</span>;
       default:
-        return <span className="bg-slate-100 text-slate-700 px-3 py-1 rounded-full text-xs font-bold">{role || 'غير محدد'}</span>;
+        return <span className="bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-400 px-3 py-1 rounded-xl text-[10px] font-black">{role || '...'}</span>;
     }
   };
 
@@ -159,40 +161,49 @@ export default function Users() {
 
   if (loading || roleLoading) {
     return (
-      <div className="flex flex-col items-center justify-center p-20 text-slate-500 font-bold">
-        جاري التحميل والتحقق من الصلاحيات...
+      <div className="flex flex-col items-center justify-center p-20 text-slate-500 dark:text-slate-400 font-bold">
+        {settings.language === 'ar' ? 'جاري التحميل والتحقق من الصلاحيات...' : 'Checking permissions and loading data...'}
       </div>
     );
   }
 
   if (!hasPermission('manage_users') && role !== 'Admin') {
     return (
-      <div className="flex flex-col items-center justify-center p-12 bg-white rounded-2xl border border-slate-200 shadow-sm text-center">
-        <div className="bg-red-50 p-4 rounded-full mb-4">
+      <div className="flex flex-col items-center justify-center p-12 bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm text-center">
+        <div className="bg-red-50 dark:bg-red-900/20 p-4 rounded-full mb-4">
           <X className="w-12 h-12 text-red-500" />
         </div>
-        <h2 className="text-2xl font-bold text-slate-800 mb-2">عذراً، لا تملك الصلاحية</h2>
-        <p className="text-slate-500">هذه الصفحة مخصصة للمديرين أو مسؤولي شؤون الموظفين.</p>
+        <h2 className="text-2xl font-bold text-slate-800 dark:text-white mb-2">{t('accessDenied')}</h2>
+        <p className="text-slate-500 dark:text-slate-400">{settings.language === 'ar' ? 'هذه الصفحة مخصصة للمديرين أو مسؤولي شؤون الموظفين.' : 'This page is restricted to administrators and personnel managers.'}</p>
       </div>
     );
   }
 
   return (
-    <div className="space-y-6 pb-20">
-      <div className="flex justify-between items-center bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
-        <h1 className="text-xl font-bold text-slate-800">إدارة المستخدمين والصلاحيات</h1>
-        <button onClick={() => setIsAddModalOpen(true)} className="bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 font-bold text-sm hover:bg-blue-700 transition shadow-sm">
-          <Plus className="w-4 h-4"/> إضافة موظف جديد
+    <div className="space-y-6 pb-20 text-start transition-colors">
+      <div className="flex justify-between items-center bg-white dark:bg-slate-900 p-4 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm">
+        <div className="flex items-center gap-3">
+          <div className="bg-blue-600 p-2.5 rounded-2xl text-white shadow-lg"><UsersIcon className="w-6 h-6" /></div>
+          <div>
+            <h1 className="text-xl font-black text-slate-800 dark:text-white leading-none mb-1">{t('users')}</h1>
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{settings.language === 'ar' ? 'إدارة المستخدمين والصلاحيات' : 'User and Permission Management'}</p>
+          </div>
+        </div>
+        <button 
+          onClick={() => setIsAddModalOpen(true)}
+          className="bg-blue-600 text-white px-6 py-2.5 rounded-xl flex items-center gap-2 font-black text-sm hover:bg-blue-700 transition transform active:scale-95 shadow-md shadow-blue-200 dark:shadow-none"
+        >
+          <Plus className="w-4 h-4" /> {settings.language === 'ar' ? 'إضافة موظف جديد' : 'Add New Employee'}
         </button>
       </div>
 
       {/* Role Overview */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         {[
-          { role: 'Admin', title: 'مدير نظام', color: 'bg-purple-50 text-purple-700 border-purple-100', desc: 'صلاحيات كاملة على الطلبات، المحاسبة، والمستخدمين.' },
-          { role: 'Accountant', title: 'محاسب', color: 'bg-amber-50 text-amber-700 border-amber-100', desc: 'إدارة المالية والمدفوعات والمصادر والتقارير.' },
-          { role: 'Employee', title: 'موظف', color: 'bg-blue-50 text-blue-700 border-blue-100', desc: 'إدارة الطلبات والعملاء وتتبع الشحنات.' },
-          { role: 'Courier', title: 'مندوب', color: 'bg-emerald-50 text-emerald-700 border-emerald-100', desc: 'تحديث حالات الشحن وتوصيل الطلبات للعملاء.' }
+          { role: 'Admin', title: t('admin'), color: 'bg-purple-50 dark:bg-purple-900/10 text-purple-700 dark:text-purple-400 border-purple-100 dark:border-purple-800', desc: settings.language === 'ar' ? 'صلاحيات كاملة على الطلبات، المحاسبة، والمستخدمين.' : 'Full access to orders, finance, and users.' },
+          { role: 'Accountant', title: settings.language === 'ar' ? 'محاسب' : 'Accountant', color: 'bg-amber-50 dark:bg-amber-900/10 text-amber-700 dark:text-amber-400 border-amber-100 dark:border-amber-800', desc: settings.language === 'ar' ? 'إدارة المالية والمدفوعات والمصادر والتقارير.' : 'Financial, payments, sources, and report management.' },
+          { role: 'Employee', title: t('user'), color: 'bg-blue-50 dark:bg-blue-900/10 text-blue-700 dark:text-blue-400 border-blue-100 dark:border-blue-800', desc: settings.language === 'ar' ? 'إدارة الطلبات والعملاء وتتبع الشحنات.' : 'Order, customer, and shipment tracking management.' },
+          { role: 'Courier', title: t('courier'), color: 'bg-emerald-50 dark:bg-emerald-900/10 text-emerald-700 dark:text-emerald-400 border-emerald-100 dark:border-emerald-800', desc: settings.language === 'ar' ? 'تحديث حالات الشحن وتوصيل الطلبات للعملاء.' : 'Shipment status updates and local deliveries.' }
         ].map((info) => (
           <div key={info.role} className={`p-4 rounded-2xl border ${info.color} transition-all hover:shadow-md`}>
             <div className="font-bold text-sm mb-1">{info.title}</div>
@@ -217,17 +228,16 @@ export default function Users() {
         </div>
 
         {loading ? (
-          <div className="p-8 text-center text-slate-500 font-medium">جاري تحميل المستخدمين...</div>
+          <div className="p-20 text-center text-slate-400 font-black">{settings.language === 'ar' ? 'جاري التحميل...' : 'Loading...'}</div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-right">
-              <thead className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider border-b border-slate-200">
+            <table className="w-full text-start">
+              <thead className="bg-slate-50 dark:bg-slate-950 text-slate-500 dark:text-slate-500 text-[10px] font-black uppercase tracking-widest border-b border-slate-100 dark:border-slate-800">
                 <tr>
-                  <th className="p-4 font-bold">الاسم</th>
-                  <th className="p-4 font-bold">البريد الإلكتروني</th>
-                  <th className="p-4 font-bold">الدور</th>
-                  <th className="p-4 font-bold">الحالة</th>
-                  <th className="p-4 font-bold text-left">إجراءات</th>
+                  <th className="p-4">{settings.language === 'ar' ? 'الاسم والبيانات' : 'Name & Info'}</th>
+                  <th className="p-4">{t('roles')}</th>
+                  <th className="p-4">{settings.language === 'ar' ? 'الحالة' : 'Status'}</th>
+                  <th className="p-4 text-left">{settings.language === 'ar' ? 'إجراءات' : 'Actions'}</th>
                 </tr>
               </thead>
               <tbody className="text-sm divide-y divide-slate-100 flex-1">

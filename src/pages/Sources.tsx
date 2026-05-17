@@ -3,9 +3,11 @@ import { collection, onSnapshot, doc, updateDoc, deleteDoc, addDoc } from 'fireb
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import { Search, Edit2, X, Plus, Trash2, MapPin } from 'lucide-react';
 import { useRole } from '../hooks/useRole';
+import { useSettings } from '../context/SettingsContext';
 
 export default function Sources() {
   const { role, hasPermission, loading: roleLoading } = useRole();
+  const { settings, t } = useSettings();
   const [sources, setSources] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -75,45 +77,48 @@ export default function Sources() {
     o.source_name?.toLowerCase().includes(search.toLowerCase())
   );
 
-  if (roleLoading) return <div className="p-20 text-center text-slate-500 font-bold">جاري التحقق من الصلاحيات...</div>;
+  if (roleLoading) return <div className="p-8 text-center text-slate-500 font-bold">{settings.language === 'ar' ? 'جاري التحقق من الصلاحيات...' : 'Checking permissions...'}</div>;
 
   if (!hasPermission('manage_sources') && role !== 'Admin') {
     return (
-      <div className="flex flex-col items-center justify-center p-12 bg-white rounded-2xl border border-slate-200 shadow-sm text-center">
-        <div className="bg-red-50 p-4 rounded-full mb-4">
+      <div className="flex flex-col items-center justify-center p-12 bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm text-center">
+        <div className="bg-red-50 dark:bg-red-900/20 p-4 rounded-full mb-4">
           <X className="w-12 h-12 text-red-500" />
         </div>
-        <h2 className="text-2xl font-bold text-slate-800 mb-2">عذراً، لا تملك الصلاحية</h2>
-        <p className="text-slate-500">إدارة المصادر مخصصة للمسؤولين فقط.</p>
+        <h2 className="text-2xl font-bold text-slate-800 dark:text-white mb-2">{t('accessDenied')}</h2>
+        <p className="text-slate-500 dark:text-slate-400">{settings.language === 'ar' ? 'إدارة المصادر مخصصة للمسؤولين فقط.' : 'Order source management is restricted to administrators only.'}</p>
       </div>
     );
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
+    <div className="space-y-6 pb-20 text-start transition-colors">
+      <div className="flex justify-between items-center bg-white dark:bg-slate-900 p-4 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm">
         <div className="flex items-center gap-3">
-          <div className="bg-blue-100 p-2 rounded-xl text-blue-600"><MapPin className="w-6 h-6" /></div>
-          <h1 className="text-xl font-bold text-slate-800">مصادر الطلبات</h1>
+          <div className="bg-blue-600 p-2.5 rounded-2xl text-white shadow-lg"><MapPin className="w-6 h-6" /></div>
+          <div>
+            <h1 className="text-xl font-black text-slate-800 dark:text-white leading-none mb-1">{t('sources')}</h1>
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest italic">{settings.language === 'ar' ? 'مصادر طلبات الشحن المسجلة' : 'Registered shipment order sources'}</p>
+          </div>
         </div>
         <button 
           onClick={handleOpenAdd}
-          className="bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 font-bold text-sm hover:bg-blue-700 transition"
+          className="bg-blue-600 text-white px-6 py-2.5 rounded-xl flex items-center gap-2 font-black text-sm hover:bg-blue-700 transition transform active:scale-95 shadow-md"
         >
-          <Plus className="w-4 h-4" /> إضافة مصدر
+          <Plus className="w-4 h-4" /> {settings.language === 'ar' ? 'إضافة مصدر' : 'Add Source'}
         </button>
       </div>
 
-      <div className="bg-white rounded-2xl shadow-sm border border-slate-200 flex flex-col">
-        <div className="p-4 border-b border-slate-100">
-          <div className="relative">
-            <Search className="w-5 h-5 absolute right-3 top-3 text-slate-400" />
+      <div className="bg-white dark:bg-slate-900 rounded-3xl shadow-sm border border-slate-200 dark:border-slate-800 flex flex-col overflow-hidden transition-colors">
+        <div className="p-6 border-b border-slate-100 dark:border-slate-800">
+          <div className="relative max-w-md">
+            <Search className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" />
             <input 
-              type="text"
-              placeholder="ابحث عن مصدر..."
+              type="text" 
+              placeholder={settings.language === 'ar' ? 'بحث عن مصدر...' : 'Search for a source...'} 
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="w-full bg-slate-50 border border-slate-200 rounded-xl pr-10 pl-4 py-2.5 outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all text-sm font-medium"
+              className="w-full pr-11 pl-4 py-3 border border-slate-200 dark:border-slate-800 rounded-2xl focus:ring-2 focus:ring-blue-500 outline-none text-sm bg-slate-50 dark:bg-slate-950 dark:text-slate-200 transition-all focus:bg-white dark:focus:bg-slate-900"
             />
           </div>
         </div>

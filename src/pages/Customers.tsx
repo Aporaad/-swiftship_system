@@ -3,9 +3,11 @@ import { collection, addDoc, doc, updateDoc, onSnapshot, deleteDoc, query, where
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import { Plus, Search, Edit2, Trash2, X, User, Phone, Mail, MapPin, Receipt, DollarSign, Package, AlertCircle } from 'lucide-react';
 import { useRole } from '../hooks/useRole';
+import { useSettings } from '../context/SettingsContext';
 
 export default function Customers() {
   const { role, hasPermission, loading: roleLoading } = useRole();
+  const { settings, t } = useSettings();
   const [customers, setCustomers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
@@ -110,46 +112,48 @@ export default function Customers() {
   const totalPaid = customerOrders.reduce((acc, o) => acc + (parseFloat(o.paidAmount) || 0), 0);
   const totalRemaining = totalAmount - totalPaid;
 
-  if (roleLoading) return <div className="p-20 text-center text-slate-500 font-bold">جاري التحميل...</div>;
+  if (roleLoading) return <div className="p-8 text-center text-slate-500 font-bold">{settings.language === 'ar' ? 'جاري التحميل...' : 'Loading...'}</div>;
 
   if (!hasPermission('view_customers') && role !== 'Admin') {
     return (
-      <div className="flex flex-col items-center justify-center p-12 bg-white rounded-2xl border border-slate-200 shadow-sm text-center">
-        <div className="bg-red-50 p-4 rounded-full mb-4"><X className="w-12 h-12 text-red-500" /></div>
-        <h2 className="text-2xl font-bold text-slate-800 mb-2">عذراً، لا تملك الصلاحية</h2>
-        <p className="text-slate-500">هذه الصفحة مخصصة للمسؤولين عن إدارة العملاء.</p>
+      <div className="flex flex-col items-center justify-center p-12 bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm text-center">
+        <div className="bg-red-50 dark:bg-red-900/20 p-4 rounded-full mb-4"><X className="w-12 h-12 text-red-500" /></div>
+        <h2 className="text-2xl font-bold text-slate-800 dark:text-white mb-2">{t('accessDenied')}</h2>
+        <p className="text-slate-500 dark:text-slate-400">{settings.language === 'ar' ? 'هذه الصفحة مخصصة للمسؤولين عن إدارة العملاء.' : 'This page is restricted to customer management administrators.'}</p>
       </div>
     );
   }
 
   return (
-    <div className="space-y-6 pb-20">
-      <div className="flex justify-between items-center bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
+    <div className="space-y-6 pb-20 text-start transition-colors">
+      <div className="flex justify-between items-center bg-white dark:bg-slate-900 p-4 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm">
         <div className="flex items-center gap-3">
-          <div className="bg-blue-100 p-2 rounded-xl text-blue-600"><User className="w-6 h-6" /></div>
-          <h1 className="text-xl font-bold text-slate-800">إدارة العملاء</h1>
+          <div className="bg-blue-600 p-2.5 rounded-2xl text-white shadow-lg"><User className="w-6 h-6" /></div>
+          <div>
+            <h1 className="text-xl font-black text-slate-800 dark:text-white leading-none mb-1">{t('customers')}</h1>
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{settings.language === 'ar' ? 'قاعدة بيانات عملاء النظام' : 'System customer database'}</p>
+          </div>
         </div>
         {hasPermission('manage_customers') && (
           <button 
             onClick={handleOpenAdd}
-            className="bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 font-bold text-sm hover:bg-blue-700 transition shadow-sm"
+            className="bg-blue-600 text-white px-6 py-2.5 rounded-xl flex items-center gap-2 font-black text-sm hover:bg-blue-700 transition transform active:scale-95 shadow-md shadow-blue-200 dark:shadow-none"
           >
-            <Plus className="w-4 h-4" /> إضافة عميل جديد
+            <Plus className="w-4 h-4" /> {settings.language === 'ar' ? 'إضافة عميل جديد' : 'Add New Customer'}
           </button>
         )}
       </div>
 
-      <div className="bg-white rounded-2xl shadow-sm border border-slate-200 flex flex-col">
-        <div className="p-4 border-b border-slate-100 flex justify-between items-center">
-          <h4 className="font-bold text-slate-800">قائمة العملاء</h4>
-          <div className="relative w-64">
-            <Search className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" />
+      <div className="bg-white dark:bg-slate-900 rounded-3xl shadow-sm border border-slate-200 dark:border-slate-800 flex flex-col overflow-hidden transition-colors">
+        <div className="p-6 border-b border-slate-100 dark:border-slate-800">
+          <div className="relative max-w-md">
+            <Search className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" />
             <input 
               type="text" 
-              placeholder="بحث بالاسم أو الرقم..." 
+              placeholder={settings.language === 'ar' ? 'بحث باسم العميل أو رقم الهاتف...' : 'Search by name or phone...'} 
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="w-full pr-9 pl-4 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm bg-slate-50"
+              className="w-full pr-11 pl-4 py-3 border border-slate-200 dark:border-slate-800 rounded-2xl focus:ring-2 focus:ring-blue-500 outline-none text-sm bg-slate-50 dark:bg-slate-950 dark:text-slate-200 transition-all focus:bg-white dark:focus:bg-slate-900"
             />
           </div>
         </div>

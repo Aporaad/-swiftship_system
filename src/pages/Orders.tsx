@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { collection, onSnapshot, orderBy, query, where, addDoc, doc, updateDoc, writeBatch, arrayUnion } from 'firebase/firestore';
-import { db, auth, handleFirestoreError, OperationType } from '../lib/firebase';
+import { collection, onSnapshot, orderBy, query, where, addDoc, doc, updateDoc, writeBatch, arrayUnion, getDoc } from 'firebase/firestore';
+import { db, auth, handleFirestoreError, OperationType, safeToDate } from '../lib/firebase';
 import { Plus, Search, Edit2, Truck, Activity, Trash2, DollarSign, CreditCard, Printer, Calculator } from 'lucide-react';
 import { format } from 'date-fns';
 import { ar } from 'date-fns/locale';
@@ -81,8 +81,28 @@ export default function Orders() {
   });
 
   useEffect(() => {
+    const fetchGlobalSettings = async () => {
+      try {
+        const docSnap = await getDoc(doc(db, 'settings', 'general'));
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          setFormData(prev => ({
+            ...prev,
+            currency: data.currency || 'USD',
+            exchangeRate: (data.exchangeRate || 1).toString()
+          }));
+        }
+      } catch (err) {
+        console.error('Error fetching settings:', err);
+      }
+    };
+    fetchGlobalSettings();
+
     const unsubOrders = onSnapshot(query(collection(db, 'orders'), orderBy('createdAt', 'desc')), (snap) => {
-      setOrders(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      setOrders(snap.docs.map(d => {
+        const data = d.data() as any;
+        return { id: d.id, ...data, createdAt: safeToDate(data.createdAt) };
+      }));
       setLoading(false);
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'orders'));
 
@@ -108,7 +128,10 @@ export default function Orders() {
       unsubPayments = onSnapshot(
         query(collection(db, 'payments'), where('orderId', '==', selectedOrder.id), orderBy('createdAt', 'desc')),
         (snap) => {
-          setOrderPayments(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+          setOrderPayments(snap.docs.map(d => {
+            const data = d.data() as any;
+            return { id: d.id, ...data, createdAt: safeToDate(data.createdAt) };
+          }));
         },
         (error) => {
           // If indexing is needed, this might fail initially, but where works natively if no compound index needed,
@@ -402,6 +425,7 @@ export default function Orders() {
               <div class="title">فاتورة ضريبية</div>
               <div>رقم التتبع: <strong>${order.trackingNumber}</strong></div>
               <div>التاريخ: ${order.createdAt ? format(order.createdAt, 'yyyy-MM-dd') : '-'}</div>
+              ${companyInfo.taxId ? `<div>الرقم الضريبي: <strong>${companyInfo.taxId}</strong></div>` : ''}
             </div>
             <div>
               <div class="title">بيانات العميل</div>
@@ -433,23 +457,23 @@ export default function Orders() {
             <table>
               <tr>
                 <td>قيمة المشتريات:</td>
-                <td dir="ltr">$${(order.itemsTotal || 0).toFixed(2)}</td>
+                <td dir="ltr">${companyInfo.currencySymbol || '$'}${(order.itemsTotal || 0).toFixed(2)}</td>
               </tr>
               <tr>
                 <td>أجور الشحن:</td>
-                <td dir="ltr">$${(order.shippingTotal || 0).toFixed(2)}</td>
+                <td dir="ltr">${companyInfo.currencySymbol || '$'}${(order.shippingTotal || 0).toFixed(2)}</td>
               </tr>
               <tr class="bold">
                 <td>الإجمالي المستحق:</td>
-                <td dir="ltr">$${(order.totalCost || 0).toFixed(2)}</td>
+                <td dir="ltr">${companyInfo.currencySymbol || '$'}${(order.totalCost || 0).toFixed(2)}</td>
               </tr>
               <tr>
                 <td>المبلغ المدفوع:</td>
-                <td dir="ltr" style="color: green">$${(order.paidAmount || 0).toFixed(2)}</td>
+                <td dir="ltr" style="color: green">${companyInfo.currencySymbol || '$'}${(order.paidAmount || 0).toFixed(2)}</td>
               </tr>
               <tr>
                 <td>المبلغ المتبقي:</td>
-                <td dir="ltr" style="color: red">$${(order.remainingAmount || 0).toFixed(2)}</td>
+                <td dir="ltr" style="color: red">${companyInfo.currencySymbol || '$'}${(order.remainingAmount || 0).toFixed(2)}</td>
               </tr>
             </table>
           </div>
@@ -543,35 +567,54 @@ export default function Orders() {
   if (roleLoading) return <div className="p-8 text-center">جاري التحقق من الصلاحيات...</div>;
 
   return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
-        <h1 className="text-xl font-bold text-slate-800">إدارة الطلبات</h1>
-        {hasPermission('manage_orders') && (
-          <button onClick={() => setIsAddModalOpen(true)} className="bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 font-bold text-sm hover:bg-blue-700 transition">
-            <Plus className="w-4 h-4"/> إضافة طلب جديد
-          </button>
-        )}
-      </div>
-
-      <div className="bg-white rounded-2xl shadow-sm border border-slate-200 flex flex-col">
-        <div className="p-4 border-b border-slate-100 flex justify-between items-center">
-           <div className="relative w-80">
-            <Search className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" />
-            <input type="text" placeholder="بحث برقم التتبع أو العميل..." value={search} onChange={(e) => setSearch(e.target.value)} className="w-full pr-9 pl-4 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm bg-slate-50" />
+    <div className="space-y-6 pb-20 font-sans text-start transition-colors">
+      <div className="flex justify-between items-center bg-white dark:bg-slate-900 p-4 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm">
+        <div className="flex items-center gap-3">
+          <div className="bg-blue-600 p-2.5 rounded-2xl text-white shadow-lg shadow-blue-200 dark:shadow-none transition-all">
+            <Package className="w-6 h-6" />
+          </div>
+          <div>
+            <h1 className="text-xl font-black text-slate-800 dark:text-white leading-none mb-1">{t('orders')}</h1>
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest italic">{settings.language === 'ar' ? 'إحصائيات تتبع ومراقبة الشحنات' : 'Shipment Tracking and Monitoring'}</p>
           </div>
         </div>
-        {loading ? <div className="p-8 text-center text-slate-500">جاري التحميل...</div> : (
+        <div className="flex gap-2">
+          {hasPermission('manage_orders') && (
+            <button 
+              onClick={() => setIsAddModalOpen(true)}
+              className="bg-blue-600 text-white px-6 py-2.5 rounded-xl flex items-center gap-2 font-black text-sm hover:bg-blue-700 transition-all shadow-md transform active:scale-95"
+            >
+              <Plus className="w-4 h-4" /> {t('addOrder')}
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div className="bg-white dark:bg-slate-900 rounded-3xl shadow-sm border border-slate-200 dark:border-slate-800 flex flex-col overflow-hidden transition-colors">
+        <div className="p-6 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center gap-4">
+          <div className="relative flex-1 max-w-md">
+            <Search className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" />
+            <input 
+              type="text" 
+              placeholder={t('searchOrders')} 
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="w-full pr-11 pl-4 py-3 border border-slate-200 dark:border-slate-800 rounded-2xl focus:ring-2 focus:ring-blue-500 outline-none text-sm bg-slate-50 dark:bg-slate-950 dark:text-slate-200 dark:placeholder-slate-600 transition-all focus:bg-white dark:focus:bg-slate-900"
+            />
+          </div>
+        </div>
+        {loading ? <div className="p-8 text-center text-slate-500">{settings.language === 'ar' ? 'جاري التحميل...' : 'Loading...'}</div> : (
           <div className="overflow-x-auto">
-            <table className="w-full text-right">
-              <thead className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider border-b border-slate-200">
+            <table className="w-full text-start">
+              <thead className="bg-slate-50 dark:bg-slate-950 text-slate-500 dark:text-slate-500 text-[10px] font-black uppercase tracking-widest border-b border-slate-100 dark:border-slate-800">
                 <tr>
-                  <th className="p-4">رقم التتبع</th>
-                  <th className="p-4">العميل</th>
-                  <th className="p-4">المصدر</th>
-                  <th className="p-4">التكلفة / المدفوع</th>
-                  <th className="p-4">مندوب التوصيل</th>
-                  <th className="p-4">تاريخ الطلب</th>
-                  <th className="p-4">إجراءات</th>
+                  <th className="p-4">{t('trackingNumber')}</th>
+                  <th className="p-4">{t('customer')}</th>
+                  <th className="p-4">{t('orderSource')}</th>
+                  <th className="p-4">{settings.language === 'ar' ? 'التكلفة / المدفوع' : 'Cost / Paid'}</th>
+                  <th className="p-4">{t('courier_assigned')}</th>
+                  <th className="p-4">{t('date')}</th>
+                  <th className="p-4 text-left">{settings.language === 'ar' ? 'إجراءات' : 'Actions'}</th>
                 </tr>
               </thead>
               <tbody className="text-sm divide-y divide-slate-100">

@@ -20,6 +20,8 @@ import Sources from './pages/Sources';
 import Settings from './pages/Settings';
 import Notifications from './pages/Notifications';
 
+import { SettingsProvider } from './context/SettingsContext';
+
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
@@ -41,24 +43,26 @@ export default function App() {
   }
 
   return (
-    <BrowserRouter>
-      <Routes>
-        <Route path="/tracking" element={<Tracking />} />
-        <Route path="/login" element={!user ? <Login /> : <Navigate to="/" />} />
-        
-        <Route path="/" element={user ? <Layout /> : <Navigate to="/login" />}>
-          <Route index element={<Dashboard />} />
-          <Route path="orders" element={<Orders />} />
-          <Route path="customers" element={<Customers />} />
-          <Route path="sources" element={<Sources />} />
-          <Route path="users" element={<Users />} />
-          <Route path="couriers" element={<Couriers />} />
-          <Route path="roles" element={<Roles />} />
-          <Route path="settings" element={<Settings />} />
-          <Route path="notifications" element={<Notifications />} />
-        </Route>
-      </Routes>
-    </BrowserRouter>
+    <SettingsProvider>
+      <BrowserRouter>
+        <Routes>
+          <Route path="/tracking" element={<Tracking />} />
+          <Route path="/login" element={!user ? <Login /> : <Navigate to="/" />} />
+          
+          <Route path="/" element={user ? <Layout /> : <Navigate to="/login" />}>
+            <Route index element={<Dashboard />} />
+            <Route path="orders" element={<Orders />} />
+            <Route path="customers" element={<Customers />} />
+            <Route path="sources" element={<Sources />} />
+            <Route path="users" element={<Users />} />
+            <Route path="couriers" element={<Couriers />} />
+            <Route path="roles" element={<Roles />} />
+            <Route path="settings" element={<Settings />} />
+            <Route path="notifications" element={<Notifications />} />
+          </Route>
+        </Routes>
+      </BrowserRouter>
+    </SettingsProvider>
   );
 }
 

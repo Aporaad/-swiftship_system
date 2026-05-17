@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Bell, Package, CheckCircle, AlertTriangle, Clock } from 'lucide-react';
 import { collection, onSnapshot, query, orderBy, getDocs, writeBatch, doc } from 'firebase/firestore';
-import { db, auth } from '../lib/firebase';
+import { db, auth, safeToDate } from '../lib/firebase';
 import { formatDistanceToNow } from 'date-fns';
 import { ar } from 'date-fns/locale';
 
@@ -14,7 +14,10 @@ export default function Notifications() {
     // In a prod app, you might use where('userId', 'in', [auth.currentUser?.uid, 'global'])
     const q = query(collection(db, 'notifications'), orderBy('createdAt', 'desc'));
     const unsub = onSnapshot(q, (snap) => {
-      setNotifications(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      setNotifications(snap.docs.map(d => {
+        const data = d.data() as any;
+        return { id: d.id, ...data, createdAt: safeToDate(data.createdAt) };
+      }));
       setLoading(false);
     });
     return unsub;

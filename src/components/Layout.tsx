@@ -1,29 +1,41 @@
 import { Outlet, Link, useNavigate, useLocation } from 'react-router-dom';
 import { signOut } from 'firebase/auth';
 import { auth } from '../lib/firebase';
-import { LayoutDashboard, Package, Users, Truck, LogOut, MapPin, Bell, Search, Settings, ShieldCheck } from 'lucide-react';
+import { LayoutDashboard, Package, Users, Truck, LogOut, MapPin, Bell, Search, Settings, ShieldCheck, Languages, Moon, Sun } from 'lucide-react';
 import { useRole } from '../hooks/useRole';
+import { useSettings } from '../context/SettingsContext';
 
 export default function Layout() {
   const navigate = useNavigate();
   const location = useLocation();
   const { role, profile, hasPermission, loading: roleLoading } = useRole();
+  const { settings, updateSettings, t } = useSettings();
 
   const handleLogout = async () => {
     await signOut(auth);
     navigate('/login');
   };
 
+  const toggleLanguage = () => {
+    const newLang = settings.language === 'ar' ? 'en' : 'ar';
+    updateSettings({ language: newLang });
+  };
+
+  const toggleTheme = () => {
+    const newTheme = settings.theme === 'light' ? 'dark' : 'light';
+    updateSettings({ theme: newTheme });
+  };
+
   const navItems = [
-    { name: 'لوحة التحكم', path: '/', icon: LayoutDashboard, permission: 'view_dashboard' },
-    { name: 'إدارة الطلبات', path: '/orders', icon: Package, permission: 'view_orders' },
-    { name: 'إدارة العملاء', path: '/customers', icon: Users, permission: 'view_customers' },
-    { name: 'إدارة المناديب', path: '/couriers', icon: Truck, permission: 'manage_couriers' },
-    { name: 'إدارة الموظفين', path: '/users', icon: Users, permission: 'manage_users' },
-    { name: 'الأدوار والصلاحيات', path: '/roles', icon: ShieldCheck, permission: 'manage_users' },
-    { name: 'مصادر الطلبات', path: '/sources', icon: MapPin, permission: 'manage_sources' },
-    { name: 'نظام التتبع', path: '/tracking', icon: MapPin, permission: 'view_orders' },
-    { name: 'إعدادات النظام', path: '/settings', icon: Settings, permission: 'settings' },
+    { name: t('dashboard'), path: '/', icon: LayoutDashboard, permission: 'view_dashboard' },
+    { name: t('orders'), path: '/orders', icon: Package, permission: 'view_orders' },
+    { name: t('customers'), path: '/customers', icon: Users, permission: 'view_customers' },
+    { name: t('couriers'), path: '/couriers', icon: Truck, permission: 'manage_couriers' },
+    { name: t('users'), path: '/users', icon: Users, permission: 'manage_users' },
+    { name: t('roles'), path: '/roles', icon: ShieldCheck, permission: 'manage_users' },
+    { name: t('sources'), path: '/sources', icon: MapPin, permission: 'manage_sources' },
+    { name: t('trackingSystem'), path: '/tracking', icon: MapPin, permission: 'view_orders' },
+    { name: t('settings'), path: '/settings', icon: Settings, permission: 'settings' },
   ];
 
   const filteredNavItems = navItems.filter(item => hasPermission(item.permission));
@@ -37,12 +49,12 @@ export default function Layout() {
   }
 
   return (
-    <div className="flex bg-slate-50 text-slate-900 overflow-hidden h-full">
+    <div className="flex bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 overflow-hidden h-full font-sans transition-colors duration-300">
       {/* Sidebar */}
-      <aside className="w-64 bg-slate-900 text-white flex-col shrink-0 hidden md:flex">
+      <aside className="w-64 bg-slate-900 dark:bg-slate-900 text-white flex-col shrink-0 hidden md:flex border-l border-slate-800">
         <div className="p-6 flex items-center gap-3 border-b border-slate-800">
-          <div className="w-8 h-8 bg-blue-500 rounded-lg flex items-center justify-center font-bold text-lg">L</div>
-          <span className="text-xl font-bold tracking-tight">لوجي-تراك</span>
+          <div className="w-8 h-8 bg-blue-500 rounded-lg flex items-center justify-center font-bold text-lg shadow-lg shadow-blue-500/20">L</div>
+          <span className="text-xl font-black tracking-tight">{settings.companyName}</span>
         </div>
         
         <nav className="flex-1 py-6">
@@ -55,13 +67,13 @@ export default function Layout() {
                 <li key={item.path}>
                   <Link
                     to={item.path}
-                    className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors font-medium ${
+                    className={`flex items-center gap-3 px-4 py-3 rounded-xl transition-all font-bold text-sm ${
                       isActive 
-                        ? 'bg-blue-600 text-white' 
-                        : 'text-slate-300 hover:bg-slate-800'
+                        ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/20 translate-x-1' 
+                        : 'text-slate-400 hover:text-white hover:bg-slate-800'
                     }`}
                   >
-                    <Icon className={`w-5 h-5 ${isActive ? 'text-white' : 'text-slate-400'}`} />
+                    <Icon className={`w-5 h-5 ${isActive ? 'text-white' : 'text-slate-500'}`} />
                     {item.name}
                   </Link>
                 </li>
@@ -71,20 +83,20 @@ export default function Layout() {
         </nav>
 
         <div className="p-4 border-t border-slate-800">
-          <div className="bg-slate-800 rounded-xl p-4 flex items-center justify-between gap-3">
+          <div className="bg-slate-800/50 dark:bg-slate-800/20 rounded-2xl p-4 flex items-center justify-between gap-3 border border-slate-700/50">
             <div className="flex items-center gap-3 overflow-hidden">
-              <div className="w-10 h-10 rounded-full bg-slate-600 border border-slate-500 shrink-0 flex items-center justify-center text-xs font-bold uppercase">
+              <div className="w-10 h-10 rounded-xl bg-slate-700 border border-slate-600 shrink-0 flex items-center justify-center text-xs font-black uppercase text-blue-400">
                 {profile?.fullName?.substring(0, 2) || auth.currentUser?.email?.substring(0, 2) || 'AD'}
               </div>
               <div className="text-xs truncate">
-                <p className="font-bold truncate">{profile?.fullName || 'المستخدم'}</p>
-                <p className="text-slate-400 truncate text-[10px]">{role === 'Admin' ? 'مدير نظام' : role || 'تحميل...'}</p>
+                <p className="font-black truncate text-slate-200">{profile?.fullName || (settings.language === 'ar' ? 'المستخدم' : 'User')}</p>
+                <p className="text-slate-500 truncate text-[10px] font-bold">{role === 'Admin' ? t('admin') : role || '...'}</p>
               </div>
             </div>
             <button
               onClick={handleLogout}
-              className="p-2 text-slate-400 hover:text-red-400 hover:bg-slate-700 rounded-md transition-colors shrink-0"
-              title="Logout"
+              className="p-2 text-slate-500 hover:text-red-400 hover:bg-red-500/10 rounded-xl transition-colors shrink-0"
+              title={t('logout')}
             >
               <LogOut className="w-4 h-4" />
             </button>
@@ -94,38 +106,54 @@ export default function Layout() {
 
       {/* Main Content */}
       <main className="flex-1 flex flex-col min-w-0 h-full">
-        <header className="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-8 shrink-0">
-          <div className="flex items-center bg-slate-100 px-4 py-2 rounded-full md:w-96 border border-slate-200">
+        <header className="h-16 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between px-8 shrink-0 transition-colors">
+          <div className="flex items-center bg-slate-100 dark:bg-slate-800 px-4 py-2 rounded-2xl md:w-96 border border-slate-200 dark:border-slate-700">
             <Search className="w-4 h-4 text-slate-400 ml-2" />
-            <input type="text" placeholder="بحث برقم التتبع أو اسم العميل..." className="bg-transparent border-none outline-none text-sm w-full" />
+            <input type="text" placeholder={t('searchPlaceholder')} className="bg-transparent border-none outline-none text-sm w-full dark:placeholder-slate-500" />
           </div>
           <div className="flex items-center gap-3">
+            {/* Mode Toggle */}
+            <button 
+              onClick={toggleTheme}
+              className="p-2.5 rounded-xl text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all border border-slate-200 dark:border-slate-700 active:scale-95"
+              title={settings.theme === 'light' ? (settings.language === 'ar' ? 'الوضع الداكن' : 'Dark Mode') : (settings.language === 'ar' ? 'الوضع الفاتح' : 'Light Mode')}
+            >
+              {settings.theme === 'light' ? <Moon className="w-4 h-4" /> : <Sun className="w-4 h-4 text-amber-500" />}
+            </button>
+            
             {/* Language Toggle */}
-            <button className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs font-bold text-slate-500 hover:bg-slate-100 transition border border-slate-200">
-              <span className="w-5 h-5 flex items-center justify-center bg-slate-100 rounded text-[10px]">EN</span>
-              <span className="hidden lg:inline text-slate-600">English</span>
+            <button 
+              onClick={toggleLanguage}
+              className="flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-black text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all border border-slate-200 dark:border-slate-700 active:scale-95"
+            >
+              <div className="w-5 h-5 flex items-center justify-center bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded text-[10px] font-black">
+                {settings.language === 'ar' ? 'EN' : 'AR'}
+              </div>
+              <span className="hidden lg:inline">
+                {settings.language === 'ar' ? 'English' : 'العربية'}
+              </span>
             </button>
 
             {/* Notifications */}
-            <Link to="/notifications" className="p-2 rounded-full hover:bg-slate-100 relative text-slate-600">
+            <Link to="/notifications" title={t('notifications')} className="p-2.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 relative text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-700 transition-all active:scale-95">
               <Bell className="w-5 h-5" />
-              <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-red-500 rounded-full ring-2 ring-white"></span>
+              <span className="absolute top-2 right-2 w-2 h-2 bg-red-500 rounded-full ring-4 ring-white dark:ring-slate-900"></span>
             </Link>
 
             {/* Profile Button */}
-            <button className="flex items-center gap-2 bg-white text-slate-700 pl-3 pr-2 py-1.5 rounded-xl text-sm font-bold border border-slate-200 hover:border-blue-400 hover:shadow-md transition-all shadow-sm group">
+            <button className="flex items-center gap-2 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 pl-3 pr-2 py-1.5 rounded-xl text-sm font-bold border border-slate-200 dark:border-slate-800 hover:border-blue-400 dark:hover:border-blue-500 hover:shadow-md transition-all shadow-sm group active:scale-95">
               <div className="flex flex-col items-end hidden sm:flex">
-                <span className="text-xs text-slate-800 leading-none mb-0.5">{profile?.fullName?.split(' ')[0] || 'المستخدم'}</span>
-                <span className="text-[10px] text-slate-400 font-medium leading-none">{role === 'Admin' ? 'مدير' : role || 'موظف'}</span>
+                <span className="text-xs text-slate-800 dark:text-slate-200 leading-none mb-0.5 font-black">{profile?.fullName?.split(' ')[0] || t('user')}</span>
+                <span className="text-[10px] text-slate-400 font-bold leading-none uppercase tracking-tighter">{role === 'Admin' ? t('admin') : role || '...'}</span>
               </div>
-              <div className="w-8 h-8 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center text-xs font-black shadow-inner group-hover:bg-blue-600 group-hover:text-white transition-colors">
+              <div className="w-8 h-8 rounded-lg bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 flex items-center justify-center text-xs font-black shadow-inner group-hover:bg-blue-600 group-hover:text-white transition-colors">
                 {profile?.fullName?.substring(0, 1) || 'U'}
               </div>
             </button>
           </div>
         </header>
 
-        <div className="flex-1 overflow-y-auto p-4 md:p-8">
+        <div className="flex-1 overflow-y-auto p-4 md:p-8 bg-slate-50 dark:bg-slate-950 transition-colors">
           <Outlet />
         </div>
       </main>

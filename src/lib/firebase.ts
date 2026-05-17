@@ -43,3 +43,15 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
   console.error('Firestore Error: ', JSON.stringify(errInfo));
   throw new Error(JSON.stringify(errInfo));
 }
+
+export function safeToDate(timestamp: any): Date | null {
+  if (!timestamp) return null;
+  if (timestamp instanceof Date) return timestamp;
+  if (timestamp && typeof timestamp.toDate === 'function') return timestamp.toDate();
+  if (typeof timestamp === 'number') return new Date(timestamp);
+  if (typeof timestamp === 'string') {
+    const d = new Date(timestamp);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  return null;
+}
