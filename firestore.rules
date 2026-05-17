@@ -1,0 +1,140 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() { return request.auth != null; }
+    function isVerified() { return request.auth.token.email_verified == true; }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+    function isValidId(id) { return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); }
+    
+    function isSuperAdmin() {
+      return isSignedIn() && isVerified() && request.auth.token.email == 'alsrhyarslan5@gmail.com';
+    }
+
+    function getUserRole() {
+      // Allow read from users table if authenticated
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+    
+    function hasRole(role) {
+      return isSuperAdmin() || (isSignedIn() && isVerified() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && getUserRole() == role);
+    }
+
+    function hasAnyRole(roles) {
+      return isSuperAdmin() || (isSignedIn() && isVerified() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (getUserRole() in roles));
+    }
+
+    // Role-based Access Levels
+    // Level 1: Manage system (Admin, SuperAdmin)
+    // Level 2: Manage operations (Employee) + Level 1
+    // Level 3: Finance (Accountant) + Level 1
+    // Level 4: Delivery (Courier)
+
+    function canManageUsers() {
+      return isSuperAdmin() || hasRole('Admin');
+    }
+
+    function canManageOperations() {
+      return isSuperAdmin() || hasAnyRole(['Admin', 'Employee']);
+    }
+
+    function canViewFinancials() {
+      return isSuperAdmin() || hasAnyRole(['Admin', 'Accountant']);
+    }
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['email', 'fullName', 'role', 'createdAt']) &&
+             data.email is string &&
+             data.fullName is string &&
+             data.role in ['Admin', 'Employee', 'Courier', 'Accountant'] &&
+             data.createdAt is number;
+    }
+
+    match /users/{userId} {
+      allow get: if isSignedIn() && isValidId(userId);
+      allow list: if canManageOperations();
+      allow create: if canManageUsers() || (isSignedIn() && request.auth.uid == userId && incoming().role == 'Employee');
+      allow update: if canManageUsers();
+      allow delete: if canManageUsers();
+    }
+
+    match /sources/{sourceId} {
+      allow read: if canManageOperations() || hasRole('Accountant');
+      allow write: if canManageOperations();
+    }
+
+    function isValidCustomer(data) {
+      return data.keys().hasAll(['fullName', 'phone']) &&
+             data.fullName is string && data.phone is string;
+    }
+
+    match /customers/{customerId} {
+      allow read: if canManageOperations() || hasRole('Accountant');
+      allow create: if canManageOperations() && isValidCustomer(incoming());
+      allow update: if canManageOperations();
+      allow delete: if canManageUsers();
+    }
+
+    match /payments/{paymentId} {
+      allow read: if canViewFinancials();
+      allow create: if canManageOperations();
+      allow update: if canManageOperations();
+      allow delete: if canManageUsers();
+    }
+
+    match /orders/{orderId} {
+      allow get: if isSignedIn();
+      allow list: if canManageOperations() || canViewFinancials() || (hasRole('Courier') && (existing().get('delivery_courier_id', '') == request.auth.uid || existing().get('shipping_courier_id', '') == request.auth.uid));
+      allow create: if canManageOperations();
+      allow update: if canManageOperations() || 
+                    (hasRole('Courier') && 
+                     (existing().get('delivery_courier_id', '') == request.auth.uid || existing().get('shipping_courier_id', '') == request.auth.uid) && 
+                     incoming().diff(existing()).affectedKeys().hasOnly(['order_status', 'delivery_status', 'notes', 'paid_amount', 'remaining_amount', 'payment_status', 'updatedAt'])
+                    );
+      allow delete: if canManageUsers();
+
+      match /items/{itemId} {
+        allow read: if isSignedIn();
+        allow create: if canManageOperations();
+        allow update: if canManageOperations();
+        allow delete: if canManageUsers();
+      }
+
+      match /shippings/{shippingId} {
+        allow read: if isSignedIn();
+        allow create: if canManageOperations();
+        allow update: if canManageOperations();
+        allow delete: if canManageUsers();
+      }
+
+      match /trackingUpdates/{updateId} {
+        allow read: if isSignedIn();
+        allow create: if canManageOperations() || hasRole('Courier');
+        allow update, delete: if false;
+      }
+    }
+
+    match /settings/{docId} {
+      allow read: if isSignedIn();
+      allow write: if canManageUsers();
+    }
+    
+    match /notifications/{docId} {
+      allow read: if isSignedIn() && (existing() == null || existing().get('userId', request.auth.uid) == request.auth.uid || existing().get('userId', 'global') == 'global');
+      allow write: if canManageOperations();
+    }
+
+    match /public_tracking/{trackingNumber} {
+      allow get: if true;
+      allow list: if false;
+      allow create: if canManageOperations();
+      allow update: if canManageOperations() || hasRole('Courier');
+      allow delete: if canManageUsers();
+    }
+  }
+}
+

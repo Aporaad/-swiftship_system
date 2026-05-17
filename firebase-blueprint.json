@@ -1,0 +1,133 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "System user (Admin, Employee, Courier, Accountant)",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string" },
+        "fullName": { "type": "string" },
+        "role": { "type": "string", "enum": ["Admin", "Employee", "Courier", "Accountant"] },
+        "createdAt": { "type": "number", "description": "Timestamp" }
+      },
+      "required": ["email", "fullName", "role", "createdAt"]
+    },
+    "Customer": {
+      "title": "Customer",
+      "description": "A customer of the system",
+      "type": "object",
+      "properties": {
+        "fullName": { "type": "string" },
+        "phone": { "type": "string" },
+        "governorate": { "type": "string" },
+        "address": { "type": "string" },
+        "notes": { "type": "string" }
+      },
+      "required": ["fullName", "phone"]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "An order purchased from a source to be delivered",
+      "type": "object",
+      "properties": {
+        "customerId": { "type": "string" },
+        "trackingNumber": { "type": "string" },
+        "orderSource": { "type": "string" },
+        "orderStatus": { 
+          "type": "string", 
+          "enum": ["Pending", "Ordered", "Processing", "Shipped", "In Transit", "In Local Warehouse", "Out For Delivery", "Delivered", "Returned", "Cancelled"] 
+        },
+        "orderDate": { "type": "number" },
+        "shipmentWeight": { "type": "number" },
+        "productCost": { "type": "number" },
+        "shippingCost": { "type": "number" },
+        "taxes": { "type": "number" },
+        "totalCost": { "type": "number" },
+        "expectedProfit": { "type": "number" },
+        "courierId": { "type": "string" },
+        "deliveryStatus": { "type": "string" },
+        "amountPaid": { "type": "number" },
+        "paymentStatus": { "type": "string", "enum": ["Unpaid", "Partial Paid", "COD", "Paid"] },
+        "createdAt": { "type": "number" },
+        "updatedAt": { "type": "number" }
+      },
+      "required": ["customerId", "trackingNumber", "orderStatus", "createdAt", "updatedAt"]
+    },
+    "OrderItem": {
+      "title": "Order Item",
+      "description": "A single product within a shipment/order",
+      "type": "object",
+      "properties": {
+        "productName": { "type": "string" },
+        "productUrl": { "type": "string" },
+        "quantity": { "type": "number" },
+        "productPrice": { "type": "number" },
+        "size": { "type": "string" },
+        "color": { "type": "string" },
+        "notes": { "type": "string" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["productName", "quantity", "productPrice", "createdAt"]
+    },
+    "TrackingUpdate": {
+      "title": "Tracking Update",
+      "description": "Log of status changes for an order",
+      "type": "object",
+      "properties": {
+        "status": { "type": "string" },
+        "location": { "type": "string" },
+        "timestamp": { "type": "number" },
+        "updatedBy": { "type": "string" }
+      },
+      "required": ["status", "timestamp", "updatedBy"]
+    },
+    "PublicTracking": {
+      "title": "Public Tracking",
+      "description": "Public visibility for an order tracking number",
+      "type": "object",
+      "properties": {
+        "status": { "type": "string" },
+        "courierId": { "type": "string" },
+        "itemCount": { "type": "number" },
+        "products": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "productName": { "type": "string" },
+              "quantity": { "type": "number" },
+              "productPrice": { "type": "number" }
+            }
+          }
+        },
+        "history": {
+          "type": "array",
+          "items": { "$ref": "#/entities/TrackingUpdate" }
+        }
+      },
+      "required": ["status", "itemCount", "history"]
+    }
+  },
+  "firestore": {
+    "/public_tracking/{trackingNumber}": {
+      "schema": { "$ref": "#/entities/PublicTracking" },
+      "description": "Publicly accessible tracking data by tracking number"
+    },
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "System users with their RBAC roles"
+    },
+    "/customers/{customerId}": {
+      "schema": { "$ref": "#/entities/Customer" },
+      "description": "Customers list"
+    },
+    "/orders/{orderId}": {
+      "schema": { "$ref": "#/entities/Order" },
+      "description": "Orders and their current state"
+    },
+    "/orders/{orderId}/trackingUpdates/{updateId}": {
+      "schema": { "$ref": "#/entities/TrackingUpdate" },
+      "description": "History of the order"
+    }
+  }
+}

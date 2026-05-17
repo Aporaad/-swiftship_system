@@ -1,0 +1,109 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() { return request.auth != null; }
+    function isVerified() { return request.auth.token.email_verified == true; }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+    function isValidId(id) { return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); }
+    
+    function isSuperAdmin() {
+      return isSignedIn() && isVerified() && request.auth.token.email == 'alsrhyarslan5@gmail.com';
+    }
+
+    function getUserRole() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+    
+    function isAdmin() {
+      return isSuperAdmin() || (isSignedIn() && isVerified() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && getUserRole() == 'Admin');
+    }
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['email', 'fullName', 'role', 'createdAt']) &&
+             data.email is string && data.email.size() >= 3 && data.email.size() <= 200 &&
+             data.fullName is string && data.fullName.size() >= 2 && data.fullName.size() <= 100 &&
+             data.role in ['Admin', 'Employee', 'Courier', 'Accountant'] &&
+             data.createdAt is number;
+    }
+
+    match /users/{userId} {
+      allow get: if isSignedIn() && isValidId(userId);
+      allow list: if isSuperAdmin() || (isSignedIn() && resource.id == request.auth.uid);
+      allow create: if isSuperAdmin() && isValidUser(incoming());
+      allow update: if isSuperAdmin() && isValidUser(incoming()) && incoming().diff(existing()).affectedKeys().hasOnly(['fullName', 'role']);
+      allow delete: if isSuperAdmin();
+    }
+
+    function isValidCustomer(data) {
+      return data.keys().hasAll(['fullName', 'phone']) &&
+             data.fullName is string && data.fullName.size() >= 2 && data.fullName.size() <= 100 &&
+             data.phone is string && data.phone.size() >= 5 && data.phone.size() <= 20 &&
+             data.get('governorate', '') is string && data.get('governorate', '').size() <= 100 &&
+             data.get('address', '') is string && data.get('address', '').size() <= 500 &&
+             data.get('notes', '') is string && data.get('notes', '').size() <= 1000;
+    }
+
+    match /customers/{customerId} {
+      allow get: if isSignedIn() && isValidId(customerId);
+      allow list: if isSuperAdmin();
+      allow create: if isSuperAdmin() && isValidCustomer(incoming());
+      allow update: if isSuperAdmin() && isValidCustomer(incoming()) && incoming().diff(existing()).affectedKeys().hasOnly(['fullName', 'phone', 'governorate', 'address', 'notes']);
+      allow delete: if false;
+    }
+
+    function isValidOrder(data) {
+      return data.keys().hasAll(['customerId', 'trackingNumber', 'orderStatus', 'createdAt', 'updatedAt']) &&
+             data.customerId is string && data.customerId.size() <= 128 &&
+             data.trackingNumber is string && data.trackingNumber.size() >= 3 && data.trackingNumber.size() <= 100 &&
+             data.orderStatus in ['Pending', 'Ordered', 'Processing', 'Shipped', 'In Transit', 'In Local Warehouse', 'Out For Delivery', 'Delivered', 'Returned', 'Cancelled'] &&
+             data.get('orderSource', '') is string && data.get('orderSource', '').size() <= 100 &&
+             data.get('orderDate', 0) is number &&
+             data.get('shipmentWeight', 0.0) is number &&
+             data.get('productCost', 0.0) is number &&
+             data.get('shippingCost', 0.0) is number &&
+             data.get('taxes', 0.0) is number &&
+             data.get('totalCost', 0.0) is number &&
+             data.get('expectedProfit', 0.0) is number &&
+             data.get('courierId', '') is string && data.get('courierId', '').size() <= 128 &&
+             data.get('deliveryStatus', '') is string && data.get('deliveryStatus', '').size() <= 100 &&
+             data.get('amountPaid', 0.0) is number &&
+             data.get('paymentStatus', '') is string && data.get('paymentStatus', '').size() <= 50 &&
+             data.createdAt is number &&
+             data.updatedAt is number;
+    }
+
+    match /orders/{orderId} {
+      allow get: if isSignedIn() && isValidId(orderId);
+      allow list: if isSuperAdmin() || (isSignedIn() && existing().courierId == request.auth.uid);
+      allow create: if isSuperAdmin() && isValidOrder(incoming()) && incoming().createdAt == request.time.toMillis() && incoming().updatedAt == request.time.toMillis();
+      allow update: if (isSuperAdmin() && isValidOrder(incoming()) && incoming().updatedAt == request.time.toMillis() && incoming().createdAt == existing().createdAt) ||
+                    (
+                      isSignedIn() && existing().courierId == request.auth.uid && 
+                      isValidOrder(incoming()) && incoming().updatedAt == request.time.toMillis() && incoming().createdAt == existing().createdAt &&
+                      incoming().diff(existing()).affectedKeys().hasOnly(['orderStatus', 'deliveryStatus', 'amountPaid', 'paymentStatus', 'updatedAt'])
+                    );
+      allow delete: if false;
+
+      match /trackingUpdates/{updateId} {
+        function isValidUpdate(data) {
+          return data.keys().hasAll(['status', 'timestamp', 'updatedBy']) &&
+                 data.status is string && data.status.size() >= 2 && data.status.size() <= 100 &&
+                 data.get('location', '') is string && data.get('location', '').size() <= 200 &&
+                 data.timestamp is number &&
+                 data.updatedBy is string && data.updatedBy.size() <= 128;
+        }
+
+        allow get: if isSignedIn() && isValidId(updateId);
+        allow list: if isSuperAdmin() || (isSignedIn() && get(/databases/$(database)/documents/orders/$(orderId)).data.courierId == request.auth.uid);
+        allow create: if (isSuperAdmin() || (isSignedIn() && get(/databases/$(database)/documents/orders/$(orderId)).data.courierId == request.auth.uid)) && isValidUpdate(incoming());
+        allow update: if false;
+        allow delete: if false;
+      }
+    }
+  }
+}
