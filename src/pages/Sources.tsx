@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { collection, onSnapshot, doc, updateDoc, deleteDoc, addDoc } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
-import { Search, Edit2, X, Plus, Trash2 } from 'lucide-react';
+import { Search, Edit2, X, Plus, Trash2, MapPin } from 'lucide-react';
+import { useRole } from '../hooks/useRole';
 
 export default function Sources() {
+  const { role, hasPermission, loading: roleLoading } = useRole();
   const [sources, setSources] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -73,10 +75,27 @@ export default function Sources() {
     o.source_name?.toLowerCase().includes(search.toLowerCase())
   );
 
+  if (roleLoading) return <div className="p-20 text-center text-slate-500 font-bold">جاري التحقق من الصلاحيات...</div>;
+
+  if (!hasPermission('manage_sources') && role !== 'Admin') {
+    return (
+      <div className="flex flex-col items-center justify-center p-12 bg-white rounded-2xl border border-slate-200 shadow-sm text-center">
+        <div className="bg-red-50 p-4 rounded-full mb-4">
+          <X className="w-12 h-12 text-red-500" />
+        </div>
+        <h2 className="text-2xl font-bold text-slate-800 mb-2">عذراً، لا تملك الصلاحية</h2>
+        <p className="text-slate-500">إدارة المصادر مخصصة للمسؤولين فقط.</p>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
-        <h1 className="text-xl font-bold text-slate-800">مصادر الطلبات</h1>
+        <div className="flex items-center gap-3">
+          <div className="bg-blue-100 p-2 rounded-xl text-blue-600"><MapPin className="w-6 h-6" /></div>
+          <h1 className="text-xl font-bold text-slate-800">مصادر الطلبات</h1>
+        </div>
         <button 
           onClick={handleOpenAdd}
           className="bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 font-bold text-sm hover:bg-blue-700 transition"

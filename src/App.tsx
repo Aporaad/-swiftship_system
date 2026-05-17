@@ -14,6 +14,8 @@ import Orders from './pages/Orders';
 import Tracking from './pages/Tracking';
 import Customers from './pages/Customers';
 import Users from './pages/Users';
+import Couriers from './pages/Couriers';
+import Roles from './pages/Roles';
 import Sources from './pages/Sources';
 import Settings from './pages/Settings';
 import Notifications from './pages/Notifications';
@@ -50,6 +52,8 @@ export default function App() {
           <Route path="customers" element={<Customers />} />
           <Route path="sources" element={<Sources />} />
           <Route path="users" element={<Users />} />
+          <Route path="couriers" element={<Couriers />} />
+          <Route path="roles" element={<Roles />} />
           <Route path="settings" element={<Settings />} />
           <Route path="notifications" element={<Notifications />} />
         </Route>

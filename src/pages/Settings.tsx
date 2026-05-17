@@ -1,11 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { collection, doc, getDoc, setDoc } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
-import { Save, Globe, Palette, Database, DollarSign, Building } from 'lucide-react';
+import { Save, Globe, Palette, Database, DollarSign, Building, X } from 'lucide-react';
+import { useRole } from '../hooks/useRole';
 
 export default function Settings() {
   const [loading, setLoading] = useState(false);
+  const [backupLoading, setBackupLoading] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const { role, hasPermission, loading: roleLoading } = useRole();
 
   const [settings, setSettings] = useState({
     language: 'ar',
@@ -32,6 +35,22 @@ export default function Settings() {
     fetchSettings();
   }, []);
 
+  if (roleLoading) {
+    return <div className="p-8 text-center text-slate-500 font-bold">جاري التحقق من الصلاحيات...</div>;
+  }
+
+  if (!hasPermission('settings') && role !== 'Admin') {
+    return (
+      <div className="flex flex-col items-center justify-center p-12 bg-white rounded-2xl border border-slate-200 shadow-sm text-center">
+        <div className="bg-red-50 p-4 rounded-full mb-4">
+          <X className="w-12 h-12 text-red-500" />
+        </div>
+        <h2 className="text-2xl font-bold text-slate-800 mb-2">عذراً، لا تملك الصلاحية</h2>
+        <p className="text-slate-500">إعدادات النظام مخصصة للمديرين فقط.</p>
+      </div>
+    );
+  }
+
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -48,8 +67,12 @@ export default function Settings() {
   };
 
   const handleBackup = () => {
-    // In a real app, this would call a Cloud Function to trigger a backup
-    alert("سيتم إرسال طلب النسخ الاحتياطي إلى الخادم. (ميزة تجريبية)");
+    setBackupLoading(true);
+    // Simulate server communication
+    setTimeout(() => {
+      setBackupLoading(false);
+      alert("سيتم إرسال طلب النسخ الاحتياطي إلى الخادم. (ميزة تجريبية)");
+    }, 1500);
   };
 
   return (
@@ -193,9 +216,10 @@ export default function Settings() {
             <button 
               type="button"
               onClick={handleBackup}
-              className="bg-slate-800 text-white px-6 py-2 rounded-lg font-bold text-sm hover:bg-slate-900 transition"
+              disabled={backupLoading}
+              className="bg-slate-800 text-white px-6 py-2 rounded-lg font-bold text-sm hover:bg-slate-900 transition disabled:bg-slate-400"
             >
-              طلب نسخة احتياطية
+              {backupLoading ? 'جاري التحضير...' : 'طلب نسخة احتياطية'}
             </button>
           </div>
         </section>

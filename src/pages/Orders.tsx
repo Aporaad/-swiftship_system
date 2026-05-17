@@ -1,12 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { collection, onSnapshot, orderBy, query, where, addDoc, doc, updateDoc, writeBatch, arrayUnion } from 'firebase/firestore';
 import { db, auth, handleFirestoreError, OperationType } from '../lib/firebase';
-import { Plus, Search, Edit2, Truck, Activity, Trash2, DollarSign, CreditCard, Printer } from 'lucide-react';
+import { Plus, Search, Edit2, Truck, Activity, Trash2, DollarSign, CreditCard, Printer, Calculator } from 'lucide-react';
 import { format } from 'date-fns';
 import { ar } from 'date-fns/locale';
+import { useRole } from '../hooks/useRole';
 
 export default function Orders() {
   const [orders, setOrders] = useState<any[]>([]);
+  const { role, hasPermission, loading: roleLoading } = useRole();
   const [customers, setCustomers] = useState<any[]>([]);
   const [couriers, setCouriers] = useState<any[]>([]);
   const [sources, setSources] = useState<any[]>([]);
@@ -16,6 +18,7 @@ export default function Orders() {
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isUpdateModalOpen, setIsUpdateModalOpen] = useState(false);
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
+  const [isFinancialModalOpen, setIsFinancialModalOpen] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState<any>(null);
   
   const [orderPayments, setOrderPayments] = useState<any[]>([]);
@@ -23,6 +26,13 @@ export default function Orders() {
     amount: '',
     paymentMethod: 'Cash',
     notes: ''
+  });
+
+  const [financialData, setFinancialData] = useState({
+    currency: 'USD',
+    exchangeRate: '1',
+    bankCommission: '0',
+    companyCommission: '0'
   });
 
   const [items, setItems] = useState<any[]>([{ productName: '', productUrl: '', quantity: '1', productPrice: '0', weight: '0', trackingNumber: '' }]);
@@ -40,6 +50,7 @@ export default function Orders() {
 
     deliveryCourierId: '',
     deliveryCourierFee: '0',
+    deliveryCourierCommission: '0',
 
     currency: 'USD',
     exchangeRate: '1',
@@ -178,6 +189,7 @@ export default function Orders() {
         
         delivery_courier_id: formData.deliveryCourierId,
         delivery_courier_fee: parseFloat(formData.deliveryCourierFee) || 0,
+        delivery_courier_commission: parseFloat(formData.deliveryCourierCommission) || 0,
         
         currency: formData.currency,
         exchangeRate: parseFloat(formData.exchangeRate) || 1,
@@ -261,11 +273,40 @@ export default function Orders() {
     setFormData({
       customerId: '', trackingNumber: '', orderSource: '', externalOrderNumber: '',
       shippingCourierId: '', shippingCourierFee: '0', shippingCourierCommission: '0',
-      deliveryCourierId: '', deliveryCourierFee: '0',
+      deliveryCourierId: '', deliveryCourierFee: '0', deliveryCourierCommission: '0',
       currency: 'USD', exchangeRate: '1', taxes: '0', bankCommission: '0', packagingFee: '0', companyCommission: '0',
       paymentType: 'Cash', amountPaid: '0', notes: ''
     });
   }
+
+  const handleDeleteOrder = async (orderId: string, trackingNumber: string) => {
+    const { deleteDoc } = await import('firebase/firestore');
+    if (!window.confirm(`هل أنت متأكد من رغبتك في حذف الطلب رقم ${trackingNumber} نهائياً؟ لا يمكن التراجع عن ذلك.`)) return;
+    try {
+      await deleteDoc(doc(db, 'orders', orderId));
+    } catch (e) {
+      handleFirestoreError(e, OperationType.DELETE, 'orders');
+    }
+  };
+
+  const handleUpdateFinancials = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedOrder) return;
+    try {
+      const updates = {
+        currency: financialData.currency,
+        exchangeRate: financialData.exchangeRate,
+        bankCommission: financialData.bankCommission,
+        companyCommission: financialData.companyCommission,
+        updatedAt: Date.now()
+      };
+      await updateDoc(doc(db, 'orders', selectedOrder.id), updates);
+      setIsFinancialModalOpen(false);
+      setSelectedOrder({ ...selectedOrder, ...updates });
+    } catch (e) {
+      handleFirestoreError(e, OperationType.UPDATE, 'orders');
+    }
+  };
 
   const handleAddPayment = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -485,13 +526,31 @@ export default function Orders() {
     } catch (err) { handleFirestoreError(err, OperationType.UPDATE, 'orders'); }
   };
 
+  const filteredOrders = orders.filter(o => {
+    const searchMatch = o.trackingNumber?.toLowerCase().includes(search.toLowerCase()) || 
+                      (customerMap[o.customerId] || '').toLowerCase().includes(search.toLowerCase());
+    
+    if (!searchMatch) return false;
+    
+    // Role based filtering
+    if (role === 'Courier') {
+      return o.delivery_courier_id === auth.currentUser?.uid;
+    }
+    
+    return true;
+  });
+
+  if (roleLoading) return <div className="p-8 text-center">جاري التحقق من الصلاحيات...</div>;
+
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
         <h1 className="text-xl font-bold text-slate-800">إدارة الطلبات</h1>
-        <button onClick={() => setIsAddModalOpen(true)} className="bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 font-bold text-sm hover:bg-blue-700 transition">
-          <Plus className="w-4 h-4"/> إضافة طلب جديد
-        </button>
+        {hasPermission('manage_orders') && (
+          <button onClick={() => setIsAddModalOpen(true)} className="bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 font-bold text-sm hover:bg-blue-700 transition">
+            <Plus className="w-4 h-4"/> إضافة طلب جديد
+          </button>
+        )}
       </div>
 
       <div className="bg-white rounded-2xl shadow-sm border border-slate-200 flex flex-col">
@@ -516,7 +575,7 @@ export default function Orders() {
                 </tr>
               </thead>
               <tbody className="text-sm divide-y divide-slate-100">
-                {orders.filter(o => o.trackingNumber?.toLowerCase().includes(search.toLowerCase()) || (customerMap[o.customerId] || '').toLowerCase().includes(search.toLowerCase())).map(order => (
+                {filteredOrders.map(order => (
                   <tr key={order.id} className="hover:bg-slate-50">
                     <td className="p-4 font-mono font-bold text-slate-700">{order.trackingNumber}</td>
                     <td className="p-4 font-bold text-slate-900">{customerMap[order.customerId] || '-'}</td>
@@ -531,12 +590,26 @@ export default function Orders() {
                       <button title="طباعة الفاتورة" onClick={() => handlePrintInvoice(order)} className="text-purple-600 hover:text-purple-800 bg-purple-50 hover:bg-purple-100 p-2 rounded-lg">
                         <Printer className="w-4 h-4" />
                       </button>
-                      <button title="إدارة المدفوعات" onClick={() => { setSelectedOrder(order); setIsPaymentModalOpen(true); }} className="text-emerald-600 hover:text-emerald-800 bg-emerald-50 hover:bg-emerald-100 p-2 rounded-lg">
-                        <DollarSign className="w-4 h-4" />
-                      </button>
-                      <button title="تحديث الحالة" onClick={() => { setSelectedOrder(order); setUpdateData({ orderStatus: order.order_status || order.orderStatus, location: '', amountPaid: order.paidAmount?.toString() || '0', notes: order.notes || '' }); setIsUpdateModalOpen(true); }} className="text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 p-2 rounded-lg">
-                        <Activity className="w-4 h-4" />
-                      </button>
+                      {hasPermission('manage_finance') && (
+                        <button title="إدارة المدفوعات" onClick={() => { setSelectedOrder(order); setIsPaymentModalOpen(true); }} className="text-emerald-600 hover:text-emerald-800 bg-emerald-50 hover:bg-emerald-100 p-2 rounded-lg">
+                          <DollarSign className="w-4 h-4" />
+                        </button>
+                      )}
+                      {hasPermission('manage_finance') && (
+                        <button title="التفاصيل المالية" onClick={() => { setSelectedOrder(order); setFinancialData({ currency: order.currency || 'USD', exchangeRate: order.exchangeRate?.toString() || '1', bankCommission: order.bankCommission?.toString() || '0', companyCommission: order.companyCommission?.toString() || '0' }); setIsFinancialModalOpen(true); }} className="text-amber-600 hover:text-amber-800 bg-amber-50 hover:bg-amber-100 p-2 rounded-lg">
+                          <Calculator className="w-4 h-4" />
+                        </button>
+                      )}
+                      {(hasPermission('update_order_status') || hasPermission('manage_orders')) && (
+                        <button title="تحديث الحالة" onClick={() => { setSelectedOrder(order); setUpdateData({ orderStatus: order.order_status || order.orderStatus, location: '', amountPaid: order.paidAmount?.toString() || '0', notes: order.notes || '' }); setIsUpdateModalOpen(true); }} className="text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 p-2 rounded-lg">
+                          <Activity className="w-4 h-4" />
+                        </button>
+                      )}
+                      {hasPermission('delete_orders') && (
+                        <button title="حذف الطلب" onClick={() => handleDeleteOrder(order.id, order.trackingNumber)} className="text-red-600 hover:text-red-800 bg-red-50 hover:bg-red-100 p-2 rounded-lg">
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -652,7 +725,10 @@ export default function Orders() {
                        <h4 className="font-bold text-slate-800 mb-3 text-sm flex items-center gap-2"><Truck className="w-4 h-4"/> مندوب الشحن (للشركة)</h4>
                        <div className="space-y-4">
                          <div>
-                            <select value={formData.shippingCourierId} onChange={e => setFormData({...formData, shippingCourierId: e.target.value})} className="w-full border border-slate-300 rounded-xl p-3 outline-none">
+                            <select value={formData.shippingCourierId} onChange={e => {
+                              const courier = couriers.find(c => c.id === e.target.value);
+                              setFormData({...formData, shippingCourierId: e.target.value, shippingCourierCommission: courier?.commissionRate || '' });
+                            }} className="w-full border border-slate-300 rounded-xl p-3 outline-none">
                               <option value="">اختر مندوب الشحن...</option>
                               {couriers.map(c => <option key={c.id} value={c.id}>{c.fullName}</option>)}
                             </select>
@@ -674,14 +750,23 @@ export default function Orders() {
                        <h4 className="font-bold text-slate-800 mb-3 text-sm flex items-center gap-2"><Truck className="w-4 h-4"/> مندوب التوصيل (للعميل)</h4>
                        <div className="space-y-4">
                          <div>
-                            <select value={formData.deliveryCourierId} onChange={e => setFormData({...formData, deliveryCourierId: e.target.value})} className="w-full border border-slate-300 rounded-xl p-3 outline-none">
+                            <select value={formData.deliveryCourierId} onChange={e => {
+                               const courier = couriers.find(c => c.id === e.target.value);
+                               setFormData({...formData, deliveryCourierId: e.target.value, deliveryCourierCommission: courier?.commissionRate || '' });
+                             }} className="w-full border border-slate-300 rounded-xl p-3 outline-none">
                               <option value="">اختر مندوب التوصيل...</option>
                               {couriers.map(c => <option key={c.id} value={c.id}>{c.fullName}</option>)}
                             </select>
                          </div>
-                         <div>
-                           <label className="text-xs text-slate-500 font-bold">رسوم التوصيل</label>
-                           <input type="number" step="0.01" value={formData.deliveryCourierFee} onChange={e => setFormData({...formData, deliveryCourierFee: e.target.value})} className="w-full border-b border-slate-300 p-2 bg-transparent outline-none" dir="ltr" />
+                         <div className="flex gap-4">
+                           <div className="flex-1">
+                             <label className="text-xs text-slate-500 font-bold">رسوم التوصيل</label>
+                             <input type="number" step="0.01" value={formData.deliveryCourierFee} onChange={e => setFormData({...formData, deliveryCourierFee: e.target.value})} className="w-full border-b border-slate-300 p-2 bg-transparent outline-none" dir="ltr" />
+                           </div>
+                           <div className="flex-1">
+                             <label className="text-xs text-slate-500 font-bold">نسبة عمولته (%)</label>
+                             <input type="number" step="0.1" value={formData.deliveryCourierCommission} onChange={e => setFormData({...formData, deliveryCourierCommission: e.target.value})} className="w-full border-b border-slate-300 p-2 bg-transparent outline-none" dir="ltr" />
+                           </div>
                          </div>
                        </div>
                      </div>
@@ -1035,6 +1120,50 @@ export default function Orders() {
            </div>
         </div>
       )}
+
+      {/* تحديث التفاصيل المالية */}
+      {isFinancialModalOpen && selectedOrder && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+           <div className="bg-white rounded-2xl shadow-xl max-w-lg w-full p-6 max-h-[90vh] overflow-y-auto">
+              <h2 className="text-xl font-bold mb-6 text-slate-800 border-b border-slate-100 pb-3 flex items-center gap-2">
+                <Calculator className="w-5 h-5 text-amber-500" />
+                تعديل التفاصيل المالية
+              </h2>
+              <form onSubmit={handleUpdateFinancials} className="space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-bold text-slate-700 mb-1">العملة</label>
+                    <select value={financialData.currency} onChange={e => setFinancialData({...financialData, currency: e.target.value})} className="w-full border border-slate-200 rounded-xl p-3 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-amber-500 outline-none">
+                      <option value="USD">USD</option>
+                      <option value="SAR">SAR</option>
+                      <option value="TRY">TRY</option>
+                      <option value="EUR">EUR</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-bold text-slate-700 mb-1">سعر الصرف</label>
+                    <input type="number" min="0" step="0.0001" value={financialData.exchangeRate} onChange={e => setFinancialData({...financialData, exchangeRate: e.target.value})} className="w-full border border-slate-200 rounded-xl p-3 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-amber-500 outline-none" dir="ltr" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-bold text-slate-700 mb-1">عمولة البنك (%)</label>
+                    <input type="number" min="0" step="0.01" value={financialData.bankCommission} onChange={e => setFinancialData({...financialData, bankCommission: e.target.value})} className="w-full border border-slate-200 rounded-xl p-3 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-amber-500 outline-none" dir="ltr" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-bold text-slate-700 mb-1">عمولة الشركة (%)</label>
+                    <input type="number" min="0" step="0.01" value={financialData.companyCommission} onChange={e => setFinancialData({...financialData, companyCommission: e.target.value})} className="w-full border border-slate-200 rounded-xl p-3 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-amber-500 outline-none" dir="ltr" />
+                  </div>
+                </div>
+                <div className="flex justify-end gap-3 mt-8 pt-4">
+                  <button type="button" onClick={() => setIsFinancialModalOpen(false)} className="px-6 py-2.5 text-slate-600 bg-slate-100 font-bold hover:bg-slate-200 rounded-xl transition">إلغاء</button>
+                  <button type="submit" className="px-6 py-2.5 bg-amber-600 text-white font-bold rounded-xl hover:bg-amber-700 transition shadow-sm flex items-center gap-2">
+                    <Calculator className="w-4 h-4" /> حفظ التعديلات
+                  </button>
+                </div>
+              </form>
+           </div>
+        </div>
+      )}
+
     </div>
   );
 }

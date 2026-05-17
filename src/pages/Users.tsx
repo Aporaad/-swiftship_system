@@ -1,13 +1,23 @@
 import React, { useState, useEffect } from 'react';
-import { collection, onSnapshot, doc, updateDoc, addDoc, setDoc } from 'firebase/firestore';
+import { collection, onSnapshot, doc, updateDoc, addDoc, setDoc, deleteDoc } from 'firebase/firestore';
 import { initializeApp } from 'firebase/app';
 import { getAuth, createUserWithEmailAndPassword, signOut } from 'firebase/auth';
-import { db, handleFirestoreError, OperationType } from '../lib/firebase';
+import { db, handleFirestoreError, OperationType, auth } from '../lib/firebase';
 import firebaseConfig from '../../firebase-applet-config.json';
-import { Search, Edit2, X, Plus, UserX, UserCheck } from 'lucide-react';
+import { Search, Edit2, X, Plus, UserX, UserCheck, Trash2 } from 'lucide-react';
+import { useRole } from '../hooks/useRole';
 
 export default function Users() {
   const [users, setUsers] = useState<any[]>([]);
+  const [roles, setRoles] = useState<any[]>([]);
+  const { role, hasPermission, profile: currentUserDoc, loading: roleLoading } = useRole();
+
+  useEffect(() => {
+    const unsubRoles = onSnapshot(collection(db, 'roles'), (snap) => {
+      setRoles(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    });
+    return () => unsubRoles();
+  }, []);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   
@@ -18,14 +28,16 @@ export default function Users() {
   const [editFormData, setEditFormData] = useState({
     fullName: '',
     role: '',
-    disabled: false
+    disabled: false,
+    commissionRate: 0
   });
 
   const [addFormData, setAddFormData] = useState({
     fullName: '',
     email: '',
     password: '',
-    role: 'Employee'
+    role: 'Employee',
+    commissionRate: 0
   });
 
   const [addLoading, setAddLoading] = useState(false);
@@ -45,7 +57,8 @@ export default function Users() {
     setEditFormData({
       fullName: user.fullName || '',
       role: user.role || 'Employee',
-      disabled: user.disabled || false
+      disabled: user.disabled || false,
+      commissionRate: user.commissionRate || 0
     });
     setIsEditModalOpen(true);
   };
@@ -58,6 +71,7 @@ export default function Users() {
         fullName: editFormData.fullName,
         role: editFormData.role,
         disabled: editFormData.disabled,
+        commissionRate: editFormData.commissionRate,
         updatedAt: Date.now()
       });
       setIsEditModalOpen(false);
@@ -68,6 +82,8 @@ export default function Users() {
   };
 
   const handleToggleStatus = async (user: any) => {
+    const action = user.disabled ? 'تفعيل' : 'تعطيل';
+    if (!window.confirm(`هل أنت متأكد من ${action} حساب ${user.fullName}؟`)) return;
     try {
       await updateDoc(doc(db, 'users', user.id), {
         disabled: !user.disabled,
@@ -75,6 +91,15 @@ export default function Users() {
       });
     } catch(err) {
       handleFirestoreError(err, OperationType.UPDATE, 'users');
+    }
+  };
+
+  const handleDeleteUser = async (id: string, name: string) => {
+    if (!window.confirm(`هل أنت متأكد من رغبتك في حذف المستخدم ${name}؟ لا يمكن التراجع عن هذا الإجراء.`)) return;
+    try {
+      await deleteDoc(doc(db, 'users', id));
+    } catch(err) {
+      handleFirestoreError(err, OperationType.DELETE, 'users');
     }
   };
 
@@ -94,6 +119,7 @@ export default function Users() {
         email: addFormData.email,
         fullName: addFormData.fullName,
         role: addFormData.role,
+        commissionRate: addFormData.commissionRate,
         disabled: false,
         createdAt: Date.now()
       });
@@ -101,7 +127,7 @@ export default function Users() {
       await signOut(secondaryAuth);
       
       setIsAddModalOpen(false);
-      setAddFormData({ fullName: '', email: '', password: '', role: 'Employee' });
+      setAddFormData({ fullName: '', email: '', password: '', role: 'Employee', commissionRate: 0 });
     } catch(err: any) {
       alert("حدث خطأ أثناء إضافة المستخدم: " + err.message);
     } finally {
@@ -125,17 +151,54 @@ export default function Users() {
   };
 
   const filteredUsers = users.filter(o => 
-    o.fullName?.toLowerCase().includes(search.toLowerCase()) ||
-    o.email?.toLowerCase().includes(search.toLowerCase())
+    o.role !== 'Courier' && (
+      o.fullName?.toLowerCase().includes(search.toLowerCase()) ||
+      o.email?.toLowerCase().includes(search.toLowerCase())
+    )
   );
 
+  if (loading || roleLoading) {
+    return (
+      <div className="flex flex-col items-center justify-center p-20 text-slate-500 font-bold">
+        جاري التحميل والتحقق من الصلاحيات...
+      </div>
+    );
+  }
+
+  if (!hasPermission('manage_users') && role !== 'Admin') {
+    return (
+      <div className="flex flex-col items-center justify-center p-12 bg-white rounded-2xl border border-slate-200 shadow-sm text-center">
+        <div className="bg-red-50 p-4 rounded-full mb-4">
+          <X className="w-12 h-12 text-red-500" />
+        </div>
+        <h2 className="text-2xl font-bold text-slate-800 mb-2">عذراً، لا تملك الصلاحية</h2>
+        <p className="text-slate-500">هذه الصفحة مخصصة للمديرين أو مسؤولي شؤون الموظفين.</p>
+      </div>
+    );
+  }
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 pb-20">
       <div className="flex justify-between items-center bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
-        <h1 className="text-xl font-bold text-slate-800">الموظفين والمندوبين</h1>
-        <button onClick={() => setIsAddModalOpen(true)} className="bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 font-bold text-sm hover:bg-blue-700 transition">
+        <h1 className="text-xl font-bold text-slate-800">إدارة المستخدمين والصلاحيات</h1>
+        <button onClick={() => setIsAddModalOpen(true)} className="bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 font-bold text-sm hover:bg-blue-700 transition shadow-sm">
           <Plus className="w-4 h-4"/> إضافة موظف جديد
         </button>
+      </div>
+
+      {/* Role Overview */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        {[
+          { role: 'Admin', title: 'مدير نظام', color: 'bg-purple-50 text-purple-700 border-purple-100', desc: 'صلاحيات كاملة على الطلبات، المحاسبة، والمستخدمين.' },
+          { role: 'Accountant', title: 'محاسب', color: 'bg-amber-50 text-amber-700 border-amber-100', desc: 'إدارة المالية والمدفوعات والمصادر والتقارير.' },
+          { role: 'Employee', title: 'موظف', color: 'bg-blue-50 text-blue-700 border-blue-100', desc: 'إدارة الطلبات والعملاء وتتبع الشحنات.' },
+          { role: 'Courier', title: 'مندوب', color: 'bg-emerald-50 text-emerald-700 border-emerald-100', desc: 'تحديث حالات الشحن وتوصيل الطلبات للعملاء.' }
+        ].map((info) => (
+          <div key={info.role} className={`p-4 rounded-2xl border ${info.color} transition-all hover:shadow-md`}>
+            <div className="font-bold text-sm mb-1">{info.title}</div>
+            <p className="text-[11px] opacity-80 leading-relaxed">{info.desc}</p>
+          </div>
+        ))}
       </div>
 
       <div className="bg-white rounded-2xl shadow-sm border border-slate-200 flex flex-col">
@@ -191,8 +254,16 @@ export default function Users() {
                       <button 
                         onClick={() => handleOpenEdit(user)}
                         className="text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 transition-colors p-2 rounded-lg"
+                        title="تعديل"
                       >
                         <Edit2 className="w-4 h-4" />
+                      </button>
+                      <button 
+                        onClick={() => handleDeleteUser(user.id, user.fullName)}
+                        className="text-red-500 hover:text-white hover:bg-red-500 bg-red-50 transition-all p-2 rounded-lg"
+                        title="حذف"
+                      >
+                        <Trash2 className="w-4 h-4" />
                       </button>
                     </td>
                   </tr>
@@ -240,10 +311,19 @@ export default function Users() {
                 <select required value={addFormData.role} onChange={(e) => setAddFormData({...addFormData, role: e.target.value})} className="w-full border border-slate-200 rounded-xl p-3 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-blue-500 outline-none font-bold text-slate-800">
                   <option value="Admin">مدير (Admin)</option>
                   <option value="Employee">موظف (Employee)</option>
-                  <option value="Courier">مندوب (Courier)</option>
                   <option value="Accountant">محاسب (Accountant)</option>
+                  {roles.filter(r => !['Admin', 'Employee', 'Courier', 'Accountant'].includes(r.id)).map(r => (
+                    <option key={r.id} value={r.id}>{r.title || r.id}</option>
+                  ))}
                 </select>
               </div>
+
+              {addFormData.role === 'Courier' && (
+                <div>
+                  <label className="block text-sm font-bold text-slate-700 mb-1">نسبة العمولة (%)</label>
+                  <input type="number" min="0" max="100" step="0.1" value={addFormData.commissionRate} onChange={(e) => setAddFormData({...addFormData, commissionRate: parseFloat(e.target.value) || 0})} className="w-full border border-slate-200 rounded-xl p-3 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-blue-500 outline-none" />
+                </div>
+              )}
 
               <div className="pt-4 flex justify-end gap-3">
                 <button type="button" onClick={() => setIsAddModalOpen(false)} className="px-5 py-2.5 text-slate-600 font-bold hover:bg-slate-100 rounded-xl transition-colors">إلغاء</button>
@@ -276,10 +356,19 @@ export default function Users() {
                 <select required value={editFormData.role} onChange={(e) => setEditFormData({...editFormData, role: e.target.value})} className="w-full border border-slate-200 rounded-xl p-3 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-blue-500 outline-none font-bold text-slate-800">
                   <option value="Admin">مدير (Admin)</option>
                   <option value="Employee">موظف (Employee)</option>
-                  <option value="Courier">مندوب (Courier)</option>
                   <option value="Accountant">محاسب (Accountant)</option>
+                  {roles.filter(r => !['Admin', 'Employee', 'Courier', 'Accountant'].includes(r.id)).map(r => (
+                    <option key={r.id} value={r.id}>{r.title || r.id}</option>
+                  ))}
                 </select>
               </div>
+
+              {editFormData.role === 'Courier' && (
+                <div>
+                  <label className="block text-sm font-bold text-slate-700 mb-1">نسبة العمولة (%)</label>
+                  <input type="number" min="0" max="100" step="0.1" value={editFormData.commissionRate} onChange={(e) => setEditFormData({...editFormData, commissionRate: parseFloat(e.target.value) || 0})} className="w-full border border-slate-200 rounded-xl p-3 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-blue-500 outline-none" />
+                </div>
+              )}
 
               <div>
                 <label className="flex items-center gap-2 cursor-pointer mt-4">

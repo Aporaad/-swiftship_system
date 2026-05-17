@@ -50,14 +50,20 @@ service cloud.firestore {
       return data.keys().hasAll(['email', 'fullName', 'role', 'createdAt']) &&
              data.email is string &&
              data.fullName is string &&
-             data.role in ['Admin', 'Employee', 'Courier', 'Accountant'] &&
+             data.role is string &&
              data.createdAt is number;
+    }
+
+    match /roles/{roleId} {
+      allow get: if isSignedIn();
+      allow list: if canManageUsers();
+      allow write: if canManageUsers();
     }
 
     match /users/{userId} {
       allow get: if isSignedIn() && isValidId(userId);
       allow list: if canManageOperations();
-      allow create: if canManageUsers() || (isSignedIn() && request.auth.uid == userId && incoming().role == 'Employee');
+      allow create: if canManageUsers() || (isSignedIn() && request.auth.uid == userId && (incoming().role == 'Employee' || incoming().role == 'Courier'));
       allow update: if canManageUsers();
       allow delete: if canManageUsers();
     }

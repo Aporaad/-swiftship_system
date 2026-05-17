@@ -3,69 +3,63 @@ import { collection, query, limit, getDocs, onSnapshot, orderBy, where, doc, get
 import { db, auth, handleFirestoreError, OperationType } from '../lib/firebase';
 import { format } from 'date-fns';
 import { ar } from 'date-fns/locale';
-import { Package, Truck, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Package, Truck, CheckCircle2, AlertCircle, TrendingUp, Users as UsersIcon } from 'lucide-react';
+import { useRole } from '../hooks/useRole';
 
 export default function Dashboard() {
   const [orders, setOrders] = useState<any[]>([]);
-  const [role, setRole] = useState<string>('Employee');
+  const { role, hasPermission, profile, loading: roleLoading } = useRole();
   const [stats, setStats] = useState({
     active: 0,
     inTransit: 0,
     local: 0,
-    profit: 0
+    profit: 0,
+    delivered: 0
   });
 
   useEffect(() => {
-    const fetchUserRole = async () => {
-      if (auth.currentUser) {
-         if (auth.currentUser.email === 'alsrhyarslan5@gmail.com') {
-            setRole('Admin');
-         } else {
-            const userDoc = await getDoc(doc(db, 'users', auth.currentUser.uid));
-            if (userDoc.exists()) {
-               setRole(userDoc.data().role || 'Employee');
-            }
-         }
-      }
-    };
-    fetchUserRole();
-  }, []);
-
-  useEffect(() => {
-    if (!auth.currentUser) return;
+    if (roleLoading || !auth.currentUser) return;
     
     let q;
-    if (role === 'Courier') {
-       q = query(collection(db, 'orders'), orderBy('createdAt', 'desc'), limit(100)); // We will filter client side since we can be delivery or shipping courier, rules will automatically filter if not admin/employee.
-    } else {
-       q = query(collection(db, 'orders'), orderBy('createdAt', 'desc'), limit(50));
-    }
+    // Base query for latest orders
+    q = query(collection(db, 'orders'), orderBy('createdAt', 'desc'), limit(50));
 
     const unsub = onSnapshot(q, (snap) => {
       let allOrders = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      if(role === 'Courier') {
-         allOrders = allOrders.filter((o: any) => o.delivery_courier_id === auth.currentUser?.uid || o.shipping_courier_id === auth.currentUser?.uid);
+      
+      // Role based row-level filtering logic
+      let visibleOrders = allOrders;
+      if (role === 'Courier' && !hasPermission('view_orders')) {
+         visibleOrders = allOrders.filter((o: any) => o.delivery_courier_id === auth.currentUser?.uid || o.shipping_courier_id === auth.currentUser?.uid);
       }
-      setOrders(allOrders);
+      
+      setOrders(visibleOrders);
 
-      // Compute stats
+      // Compute stats - Admins and those with view_finance see global stats, others see their filtered stats
       let active = 0, inTransit = 0, local = 0, profit = 0, delivered = 0;
-      allOrders.forEach(o => {
-          if (o.order_status === 'Shipped' || o.order_status === 'In Transit' || o.orderStatus === 'Shipped' || o.orderStatus === 'In Transit') inTransit++;
-          if (o.order_status === 'In Local Warehouse' || o.orderStatus === 'In Local Warehouse') local++;
-          if (o.order_status === 'Delivered' || o.orderStatus === 'Delivered') delivered++;
-          if (o.order_status !== 'Delivered' && o.order_status !== 'Cancelled' && o.order_status !== 'Returned' && o.orderStatus !== 'Delivered' && o.orderStatus !== 'Cancelled' && o.orderStatus !== 'Returned') active++;
-          profit += (o.companyCommission || o.expectedProfit || 0);
+      
+      // For global stats if hasPermission('view_finance'), otherwise use visibleOrders
+      const statsToCompute = hasPermission('view_finance') ? allOrders : visibleOrders;
+
+      statsToCompute.forEach((o: any) => {
+          const status = o.order_status || o.orderStatus;
+          if (status === 'Shipped' || status === 'In Transit') inTransit++;
+          if (status === 'In Local Warehouse') local++;
+          if (status === 'Delivered') delivered++;
+          if (status !== 'Delivered' && status !== 'Cancelled' && status !== 'Returned') active++;
+          
+          const commission = parseFloat(o.companyCommission) || 0;
+          profit += commission;
       });
       
-      setStats({ active, inTransit, local, profit: profit, delivered });
+      setStats({ active, inTransit, local, profit, delivered });
 
     }, (error) => {
       handleFirestoreError(error, OperationType.LIST, 'orders');
     });
 
     return unsub;
-  }, [role]);
+  }, [role, hasPermission, roleLoading]);
 
   const getStatusBadge = (status: string) => {
     switch(status) {
@@ -84,6 +78,10 @@ export default function Dashboard() {
         return <span className="bg-slate-100 text-slate-700 px-3 py-1 rounded-full text-xs">{status}</span>;
     }
   };
+
+  if (roleLoading) {
+    return <div className="p-8 text-center text-slate-500 font-bold">جاري تحميل البيانات...</div>;
+  }
 
   return (
     <div className="space-y-6">
@@ -127,8 +125,8 @@ export default function Dashboard() {
           <div className="flex items-end justify-between">
             <div className="flex gap-2 items-baseline">
               <h3 className="text-2xl font-bold text-emerald-700">{stats.delivered}</h3>
-              {role !== 'Courier' && role !== 'Employee' && (
-                <span className="text-sm font-bold text-slate-500 line-through decoration-emerald-300">
+              {hasPermission('view_finance') && (
+                <span className="text-sm font-bold text-slate-500">
                   <span className="text-emerald-600 no-underline" dir="ltr">${stats.profit.toFixed(2)}</span>
                 </span>
               )}
