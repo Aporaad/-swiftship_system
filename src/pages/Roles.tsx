@@ -13,9 +13,13 @@ const AVAILABLE_PERMISSIONS = (t: any, lang: string) => [
   { id: 'delete_orders', label: lang === 'ar' ? 'حذف الطلبات' : 'Delete Orders', group: lang === 'ar' ? 'الطلبات' : 'Orders' },
   { id: 'view_customers', label: lang === 'ar' ? 'عرض العملاء' : 'View Customers', group: lang === 'ar' ? 'العملاء' : 'Customers' },
   { id: 'manage_customers', label: lang === 'ar' ? 'إدارة العملاء' : 'Manage Customers', group: lang === 'ar' ? 'العملاء' : 'Customers' },
+  { id: 'delete_customers', label: lang === 'ar' ? 'حذف العملاء' : 'Delete Customers', group: lang === 'ar' ? 'العملاء' : 'Customers' },
   { id: 'manage_sources', label: lang === 'ar' ? 'إدارة مصادر الطلبات' : 'Manage Order Sources', group: lang === 'ar' ? 'المسؤول' : 'Admin' },
+  { id: 'delete_sources', label: lang === 'ar' ? 'حذف مصادر الطلبات' : 'Delete Order Sources', group: lang === 'ar' ? 'المسؤول' : 'Admin' },
   { id: 'manage_couriers', label: lang === 'ar' ? 'إدارة المناديب' : 'Manage Couriers', group: lang === 'ar' ? 'المسؤول' : 'Admin' },
+  { id: 'delete_couriers', label: lang === 'ar' ? 'حذف المناديب' : 'Delete Couriers', group: lang === 'ar' ? 'المسؤول' : 'Admin' },
   { id: 'manage_users', label: lang === 'ar' ? 'إدارة الموظفين والأدوار' : 'Manage Staff & Roles', group: lang === 'ar' ? 'المسؤول' : 'Admin' },
+  { id: 'delete_users', label: lang === 'ar' ? 'حذف الموظفين' : 'Delete Staff members', group: lang === 'ar' ? 'المسؤول' : 'Admin' },
   { id: 'view_finance', label: lang === 'ar' ? 'عرض البيانات المالية' : 'View Financial Data', group: lang === 'ar' ? 'المحاسبة' : 'Accounting' },
   { id: 'manage_finance', label: lang === 'ar' ? 'إدارة المالية والمدفوعات' : 'Manage Finance & Payments', group: lang === 'ar' ? 'المحاسبة' : 'Accounting' },
   { id: 'settings', label: lang === 'ar' ? 'إعدادات النظام' : 'System Settings', group: lang === 'ar' ? 'المسؤول' : 'Admin' },
@@ -38,14 +42,37 @@ export default function Roles() {
   });
 
   useEffect(() => {
-    const unsub = onSnapshot(collection(db, 'roles'), (snap) => {
-      setRoles(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    if (roleLoading) return;
+    const unsub = onSnapshot(collection(db, 'roles'), async (snap) => {
+      const fetchedRoles = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      setRoles(fetchedRoles);
+      
+      // Auto-initialize default roles if they don't exist
+      const defaultRoles = [
+        { id: 'Admin', title: settings.language === 'ar' ? 'مدير النظام' : 'System Admin', permissions: ['*'] },
+        { id: 'Employee', title: settings.language === 'ar' ? 'موظف' : 'Employee', permissions: ['view_dashboard', 'view_orders', 'manage_orders', 'view_customers', 'manage_customers', 'delete_orders', 'delete_customers', 'manage_couriers', 'delete_couriers'] },
+        { id: 'Courier', title: settings.language === 'ar' ? 'مندوب' : 'Courier', permissions: ['view_orders', 'update_order_status'] },
+        { id: 'Accountant', title: settings.language === 'ar' ? 'محاسب' : 'Accountant', permissions: ['view_dashboard', 'view_orders', 'view_finance', 'manage_finance', 'manage_sources', 'delete_sources'] }
+      ];
+
+      for (const dr of defaultRoles) {
+        if (!fetchedRoles.find(r => r.id === dr.id)) {
+          console.log(`Initializing missing role: ${dr.id}`);
+          await setDoc(doc(db, 'roles', dr.id), {
+            title: dr.title,
+            permissions: dr.permissions,
+            createdAt: Date.now(),
+            isDefault: true
+          });
+        }
+      }
+
       setLoading(false);
     }, (error) => {
       handleFirestoreError(error, OperationType.LIST, 'roles');
     });
     return unsub;
-  }, []);
+  }, [settings.language, roleLoading]);
 
   const handleOpenAdd = () => {
     setSelectedRole(null);
@@ -89,8 +116,8 @@ export default function Roles() {
   };
 
   const handleDelete = async (id: string) => {
-    if (['Admin', 'Employee', 'Courier', 'Accountant'].includes(id)) {
-      return alert(settings.language === 'ar' ? 'لا يمكن حذف الأدوار الأساسية للنظام' : 'Cannot delete core roles');
+    if (id === 'Admin') {
+      return alert(settings.language === 'ar' ? 'لا يمكن حذف دور مدير النظام مطلقا' : 'Cannot delete Admin role');
     }
     if (!window.confirm(settings.language === 'ar' ? `هل أنت متأكد من حذف دور ${id}؟` : `Are you sure you want to delete role ${id}?`)) return;
     try {
@@ -145,7 +172,7 @@ export default function Roles() {
                 >
                   <Edit2 className="w-4 h-4 text-blue-600 dark:text-blue-400" />
                 </button>
-                {!['Admin', 'Employee', 'Courier', 'Accountant'].includes(r.id) && (
+                {!['Admin'].includes(r.id) && (
                   <button 
                     onClick={() => handleDelete(r.id)}
                     className="p-2 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-xl transition-all"
@@ -203,7 +230,7 @@ export default function Roles() {
               <div>
                 <label className="block text-sm font-bold text-slate-700 mb-3">تخصيص الصلاحيات</label>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-2">
-                  {AVAILABLE_PERMISSIONS.map(perm => (
+                  {currentPermissions.map(perm => (
                     <label key={perm.id} className="flex items-center gap-3 p-3 rounded-xl border border-slate-100 hover:bg-slate-50 cursor-pointer transition-colors">
                       <div 
                         onClick={() => togglePermission(perm.id)}

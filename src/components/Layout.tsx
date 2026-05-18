@@ -1,15 +1,35 @@
+import { useState, useEffect } from 'react';
 import { Outlet, Link, useNavigate, useLocation } from 'react-router-dom';
 import { signOut } from 'firebase/auth';
-import { auth } from '../lib/firebase';
-import { LayoutDashboard, Package, Users, Truck, LogOut, MapPin, Bell, Search, Settings, ShieldCheck, Languages, Moon, Sun } from 'lucide-react';
+import { collection, query, where, onSnapshot } from 'firebase/firestore';
+import { auth, db } from '../lib/firebase';
+import { LayoutDashboard, Package, Users, Truck, LogOut, MapPin, Bell, Search, Settings, ShieldCheck, Languages, Moon, Sun, RotateCw } from 'lucide-react';
 import { useRole } from '../hooks/useRole';
 import { useSettings } from '../context/SettingsContext';
+
+import { Toaster } from 'react-hot-toast';
 
 export default function Layout() {
   const navigate = useNavigate();
   const location = useLocation();
   const { role, profile, hasPermission, loading: roleLoading } = useRole();
   const { settings, updateSettings, t } = useSettings();
+  const [unreadCount, setUnreadCount] = useState(0);
+
+  useEffect(() => {
+    if (!auth.currentUser || roleLoading || !role) return;
+    
+    // In this app, notifications are global or user-specific. 
+    // For simplicity, we count unread notifications.
+    const q = query(collection(db, 'notifications'), where('read', '==', false));
+    const unsub = onSnapshot(q, (snap) => {
+      setUnreadCount(snap.docs.length);
+    }, (error) => {
+      console.error("Error listening to notifications:", error);
+    });
+
+    return () => unsub();
+  }, []);
 
   const handleLogout = async () => {
     await signOut(auth);
@@ -44,6 +64,23 @@ export default function Layout() {
     return (
       <div className="flex bg-slate-900 text-white h-screen items-center justify-center">
         <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-600 border-t-transparent"></div>
+      </div>
+    );
+  }
+
+  if (!role && !roleLoading) {
+    return (
+      <div className="flex bg-slate-900 text-white h-screen flex-col items-center justify-center p-8 text-center">
+        <ShieldCheck className="w-16 h-16 text-slate-700 mb-6" />
+        <h1 className="text-2xl font-black mb-4">{settings.language === 'ar' ? 'غير مصرح' : 'Unauthorized'}</h1>
+        <p className="text-slate-400 max-w-md mb-8">
+          {settings.language === 'ar' 
+            ? 'هذا الحساب غير مسجل في النظام حالياً. يرجى التواصل مع المدير لتفعيل حسابك.' 
+            : 'This account is not currently registered in the system. Please contact the administrator to activate your account.'}
+        </p>
+        <button onClick={handleLogout} className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 rounded-2xl font-bold transition-all">
+          {t('logout')}
+        </button>
       </div>
     );
   }
@@ -112,6 +149,15 @@ export default function Layout() {
             <input type="text" placeholder={t('searchPlaceholder')} className="bg-transparent border-none outline-none text-sm w-full dark:placeholder-slate-500" />
           </div>
           <div className="flex items-center gap-3">
+            {/* Refresh Button */}
+            <button 
+              onClick={() => window.location.reload()}
+              className="p-2.5 rounded-xl text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all border border-slate-200 dark:border-slate-700 active:scale-95 group"
+              title={settings.language === 'ar' ? 'تحديث البيانات' : 'Refresh Data'}
+            >
+              <RotateCw className="w-4 h-4 group-hover:rotate-180 transition-transform duration-500" />
+            </button>
+
             {/* Mode Toggle */}
             <button 
               onClick={toggleTheme}
@@ -137,7 +183,11 @@ export default function Layout() {
             {/* Notifications */}
             <Link to="/notifications" title={t('notifications')} className="p-2.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 relative text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-700 transition-all active:scale-95">
               <Bell className="w-5 h-5" />
-              <span className="absolute top-2 right-2 w-2 h-2 bg-red-500 rounded-full ring-4 ring-white dark:ring-slate-900"></span>
+              {unreadCount > 0 && (
+                <span className="absolute -top-1.5 -right-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-red-600 text-[10px] font-black text-white ring-2 ring-white dark:ring-slate-900 shadow-lg shadow-red-200 dark:shadow-none animate-bounce-subtle">
+                  {unreadCount > 9 ? '9+' : unreadCount}
+                </span>
+              )}
             </Link>
 
             {/* Profile Button */}
@@ -156,6 +206,22 @@ export default function Layout() {
         <div className="flex-1 overflow-y-auto p-4 md:p-8 bg-slate-50 dark:bg-slate-950 transition-colors">
           <Outlet />
         </div>
+        <Toaster 
+          position="top-center"
+          toastOptions={{
+            duration: 4000,
+            style: {
+              background: settings.theme === 'dark' ? '#1e293b' : '#ffffff',
+              color: settings.theme === 'dark' ? '#f1f5f9' : '#1e293b',
+              borderRadius: '16px',
+              border: settings.theme === 'dark' ? '1px solid #334155' : '1px solid #e2e8f0',
+              boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)',
+              fontSize: '14px',
+              fontWeight: '700',
+              fontFamily: 'Inter, sans-serif'
+            }
+          }}
+        />
       </main>
     </div>
   );

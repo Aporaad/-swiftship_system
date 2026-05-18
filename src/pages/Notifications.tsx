@@ -4,12 +4,15 @@ import { collection, onSnapshot, query, orderBy, getDocs, writeBatch, doc } from
 import { db, auth, safeToDate } from '../lib/firebase';
 import { formatDistanceToNow } from 'date-fns';
 import { ar } from 'date-fns/locale';
+import { useRole } from '../hooks/useRole';
 
 export default function Notifications() {
   const [notifications, setNotifications] = useState<any[]>([]);
+  const { loading: roleLoading } = useRole();
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    if (roleLoading) return;
     // Only fetch for current user or global. Since we use 'global' currently, we'll fetch all.
     // In a prod app, you might use where('userId', 'in', [auth.currentUser?.uid, 'global'])
     const q = query(collection(db, 'notifications'), orderBy('createdAt', 'desc'));
@@ -19,9 +22,12 @@ export default function Notifications() {
         return { id: d.id, ...data, createdAt: safeToDate(data.createdAt) };
       }));
       setLoading(false);
+    }, (error) => {
+      console.error(error);
+      setLoading(false);
     });
     return unsub;
-  }, []);
+  }, [roleLoading]);
 
   const markAllAsRead = async () => {
     try {

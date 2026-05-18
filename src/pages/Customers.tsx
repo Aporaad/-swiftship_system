@@ -4,6 +4,8 @@ import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import { Plus, Search, Edit2, Trash2, X, User, Phone, Mail, MapPin, Receipt, DollarSign, Package, AlertCircle } from 'lucide-react';
 import { useRole } from '../hooks/useRole';
 import { useSettings } from '../context/SettingsContext';
+import { notificationService } from '../services/notificationService';
+import ConfirmModal from '../components/ConfirmModal';
 
 export default function Customers() {
   const { role, hasPermission, loading: roleLoading } = useRole();
@@ -17,11 +19,27 @@ export default function Customers() {
   const [customerOrders, setCustomerOrders] = useState<any[]>([]);
   const [ordersLoading, setOrdersLoading] = useState(false);
 
+  // Confirmation Modal State
+  const [confirmConfig, setConfirmConfig] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void;
+    type: 'danger' | 'warning' | 'info';
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    onConfirm: () => {},
+    type: 'danger'
+  });
+
   const [formData, setFormData] = useState({
     fullName: '', phone: '', email: '', gps_location: '', address: '', notes: ''
   });
 
   useEffect(() => {
+    if (roleLoading) return;
     const unsub = onSnapshot(collection(db, 'customers'), (snap) => {
       setCustomers(snap.docs.map(d => ({ id: d.id, ...d.data() })));
       setLoading(false);
@@ -29,7 +47,7 @@ export default function Customers() {
       handleFirestoreError(error, OperationType.LIST, 'customers');
     });
     return unsub;
-  }, []);
+  }, [roleLoading]);
 
   const handleOpenAdd = () => {
     setSelectedCustomer(null);
@@ -80,10 +98,20 @@ export default function Customers() {
           ...formData,
           updatedAt: Date.now()
         });
+        notificationService.notify({
+          title: settings.language === 'ar' ? 'تحديث عميل' : 'Customer Updated',
+          message: settings.language === 'ar' ? `تم تحديث بيانات العميل ${formData.fullName}` : `Customer ${formData.fullName} has been updated`,
+          type: 'info'
+        });
       } else {
         await addDoc(collection(db, 'customers'), {
           ...formData,
           createdAt: Date.now()
+        });
+        notificationService.notify({
+          title: settings.language === 'ar' ? 'إضافة عميل' : 'Customer Added',
+          message: settings.language === 'ar' ? `تمت إضافة العميل الجديد ${formData.fullName}` : `New customer ${formData.fullName} added`,
+          type: 'success'
         });
       }
       setShowModal(false);
@@ -93,12 +121,29 @@ export default function Customers() {
   };
 
   const handleDeleteCustomer = async (id: string, name: string) => {
-    if(!window.confirm(`هل أنت متأكد من رغبتك في حذف العميل ${name}؟ لا يمكن التراجع عن ذلك.`)) return;
-    try {
-      await deleteDoc(doc(db, 'customers', id));
-    } catch (e) {
-      handleFirestoreError(e, OperationType.DELETE, 'customers');
-    }
+    setConfirmConfig({
+      isOpen: true,
+      title: settings.language === 'ar' ? 'حذف عميل' : 'Delete Customer',
+      message: settings.language === 'ar' ? `هل أنت متأكد من رغبتك في حذف العميل ${name}؟ لا يمكن التراجع عن ذلك.` : `Are you sure you want to delete customer ${name}? This action cannot be undone.`,
+      type: 'danger',
+      onConfirm: async () => {
+        try {
+          await deleteDoc(doc(db, 'customers', id));
+          notificationService.notify({
+            title: settings.language === 'ar' ? 'حذف عميل' : 'Customer Deleted',
+            message: settings.language === 'ar' ? `تم حذف العميل ${name} بنجاح` : `Customer ${name} deleted successfully`,
+            type: 'warning'
+          });
+        } catch (err: any) {
+          console.error(err);
+          notificationService.notify({
+            title: settings.language === 'ar' ? 'خطأ في الحذف' : 'Delete Error',
+            message: settings.language === 'ar' ? `تعذر حذف العميل: ${err.message}` : `Could not delete customer: ${err.message}`,
+            type: 'error'
+          });
+        }
+      }
+    });
   };
 
   const filteredCustomers = customers.filter(c => 
@@ -196,9 +241,11 @@ export default function Customers() {
                           <button onClick={() => handleOpenEdit(customer)} className="text-blue-600 hover:text-white hover:bg-blue-600 bg-blue-50 transition-all p-2 rounded-lg">
                             <Edit2 className="w-4 h-4" />
                           </button>
-                          <button onClick={() => handleDeleteCustomer(customer.id, customer.fullName || 'العميل')} className="text-red-500 hover:text-white hover:bg-red-500 bg-red-50 transition-all p-2 rounded-lg">
-                            <Trash2 className="w-4 h-4" />
-                          </button>
+                          {hasPermission('delete_customers') && (
+                            <button onClick={() => handleDeleteCustomer(customer.id, customer.fullName || 'العميل')} className="text-red-500 hover:text-white hover:bg-red-500 bg-red-50 transition-all p-2 rounded-lg">
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          )}
                         </>
                       )}
                     </td>
@@ -383,6 +430,15 @@ export default function Customers() {
           </div>
         </div>
       )}
+
+      <ConfirmModal 
+        isOpen={confirmConfig.isOpen}
+        onClose={() => setConfirmConfig({ ...confirmConfig, isOpen: false })}
+        onConfirm={confirmConfig.onConfirm}
+        title={confirmConfig.title}
+        message={confirmConfig.message}
+        type={confirmConfig.type}
+      />
     </div>
   );
 }

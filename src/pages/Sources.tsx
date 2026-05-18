@@ -4,6 +4,8 @@ import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import { Search, Edit2, X, Plus, Trash2, MapPin } from 'lucide-react';
 import { useRole } from '../hooks/useRole';
 import { useSettings } from '../context/SettingsContext';
+import { notificationService } from '../services/notificationService';
+import ConfirmModal from '../components/ConfirmModal';
 
 export default function Sources() {
   const { role, hasPermission, loading: roleLoading } = useRole();
@@ -11,6 +13,22 @@ export default function Sources() {
   const [sources, setSources] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [sortBy, setSortBy] = useState('newest');
+
+  // Confirmation Modal State
+  const [confirmConfig, setConfirmConfig] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void;
+    type: 'danger' | 'warning' | 'info';
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    onConfirm: () => {},
+    type: 'danger'
+  });
   
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedSource, setSelectedSource] = useState<any>(null);
@@ -21,6 +39,7 @@ export default function Sources() {
   });
 
   useEffect(() => {
+    if (roleLoading) return;
     const unsub = onSnapshot(collection(db, 'sources'), (snap) => {
       setSources(snap.docs.map(d => ({ id: d.id, ...d.data() })));
       setLoading(false);
@@ -28,7 +47,7 @@ export default function Sources() {
       handleFirestoreError(error, OperationType.LIST, 'sources');
     });
     return unsub;
-  }, []);
+  }, [roleLoading]);
 
   const handleOpenEdit = (source: any) => {
     setSelectedSource(source);
@@ -51,10 +70,20 @@ export default function Sources() {
     try {
       if (selectedSource) {
         await updateDoc(doc(db, 'sources', selectedSource.id), formData);
+        notificationService.notify({
+          title: settings.language === 'ar' ? 'تعديل مصدر' : 'Source Updated',
+          message: settings.language === 'ar' ? `تم تحديث بيانات المصدر ${formData.source_name}` : `Order source ${formData.source_name} has been updated`,
+          type: 'info'
+        });
       } else {
         await addDoc(collection(db, 'sources'), {
           ...formData,
           createdAt: Date.now()
+        });
+        notificationService.notify({
+          title: settings.language === 'ar' ? 'إضافة مصدر' : 'Source Added',
+          message: settings.language === 'ar' ? `تمت إضافة المصدر الجديد ${formData.source_name} بنجاح` : `New order source ${formData.source_name} added`,
+          type: 'success'
         });
       }
       setIsModalOpen(false);
@@ -64,18 +93,41 @@ export default function Sources() {
     }
   };
 
-  const handleDelete = async (id: string) => {
-    if(!window.confirm('هل أنت متأكد من الحذف؟')) return;
-    try {
-      await deleteDoc(doc(db, 'sources', id));
-    } catch (err) {
-      handleFirestoreError(err, OperationType.DELETE, 'sources');
-    }
+  const handleDelete = async (id: string, name: string) => {
+    setConfirmConfig({
+      isOpen: true,
+      title: settings.language === 'ar' ? 'حذف مصدر' : 'Delete Source',
+      message: settings.language === 'ar' ? `هل أنت متأكد من رغبتك في حذف المصدر ${name}؟` : `Are you sure you want to delete order source ${name}?`,
+      type: 'danger',
+      onConfirm: async () => {
+        try {
+          await deleteDoc(doc(db, 'sources', id));
+          notificationService.notify({
+            title: settings.language === 'ar' ? 'حذف مصدر' : 'Source Deleted',
+            message: settings.language === 'ar' ? 'تم حذف المصدر بنجاح' : 'Order source deleted successfully',
+            type: 'warning'
+          });
+        } catch (err: any) {
+          console.error(err);
+          notificationService.notify({
+            title: settings.language === 'ar' ? 'خطأ في الحذف' : 'Delete Error',
+            message: settings.language === 'ar' ? `تعذر حذف المصدر: ${err.message}` : `Could not delete source: ${err.message}`,
+            type: 'error'
+          });
+        }
+      }
+    });
   };
 
-  const filteredSources = sources.filter(o => 
-    o.source_name?.toLowerCase().includes(search.toLowerCase())
-  );
+  const filteredSources = sources
+    .filter(o => 
+      o.source_name?.toLowerCase().includes(search.toLowerCase())
+    )
+    .sort((a, b) => {
+      if (sortBy === 'newest') return (b.createdAt || 0) - (a.createdAt || 0);
+      if (sortBy === 'name-asc') return (a.source_name || '').localeCompare(b.source_name || '');
+      return 0;
+    });
 
   if (roleLoading) return <div className="p-8 text-center text-slate-500 font-bold">{settings.language === 'ar' ? 'جاري التحقق من الصلاحيات...' : 'Checking permissions...'}</div>;
 
@@ -110,17 +162,22 @@ export default function Sources() {
       </div>
 
       <div className="bg-white dark:bg-slate-900 rounded-3xl shadow-sm border border-slate-200 dark:border-slate-800 flex flex-col overflow-hidden transition-colors">
-        <div className="p-6 border-b border-slate-100 dark:border-slate-800">
-          <div className="relative max-w-md">
+        <div className="p-4 border-b border-slate-100 flex flex-wrap items-center gap-4">
+          <div className="relative flex-1 min-w-[200px]">
             <Search className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" />
             <input 
               type="text" 
               placeholder={settings.language === 'ar' ? 'بحث عن مصدر...' : 'Search for a source...'} 
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="w-full pr-11 pl-4 py-3 border border-slate-200 dark:border-slate-800 rounded-2xl focus:ring-2 focus:ring-blue-500 outline-none text-sm bg-slate-50 dark:bg-slate-950 dark:text-slate-200 transition-all focus:bg-white dark:focus:bg-slate-900"
+              className="w-full pr-11 pl-4 py-2.5 border border-slate-200 dark:border-slate-800 rounded-2xl focus:ring-2 focus:ring-blue-500 outline-none text-sm bg-slate-50 dark:bg-slate-950 dark:text-slate-200 transition-all focus:bg-white dark:focus:bg-slate-900"
             />
           </div>
+
+          <select value={sortBy} onChange={e => setSortBy(e.target.value)} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500">
+            <option value="newest">الأحدث</option>
+            <option value="name-asc">الاسم (أ-ي)</option>
+          </select>
         </div>
 
         {loading ? (
@@ -150,9 +207,11 @@ export default function Sources() {
                       <button onClick={() => handleOpenEdit(source)} className="text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 transition-colors p-2 rounded-lg">
                         <Edit2 className="w-4 h-4" />
                       </button>
-                      <button onClick={() => handleDelete(source.id)} className="text-red-600 hover:text-red-800 bg-red-50 hover:bg-red-100 transition-colors p-2 rounded-lg">
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                      {hasPermission('delete_sources') && (
+                        <button onClick={() => handleDelete(source.id, source.source_name || t('source'))} className="text-red-600 hover:text-red-800 bg-red-50 hover:bg-red-100 transition-colors p-2 rounded-lg">
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -234,6 +293,15 @@ export default function Sources() {
           </div>
         </div>
       )}
+
+      <ConfirmModal 
+        isOpen={confirmConfig.isOpen}
+        onClose={() => setConfirmConfig({ ...confirmConfig, isOpen: false })}
+        onConfirm={confirmConfig.onConfirm}
+        title={confirmConfig.title}
+        message={confirmConfig.message}
+        type={confirmConfig.type}
+      />
     </div>
   );
 }

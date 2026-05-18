@@ -21,7 +21,7 @@ export default function Dashboard() {
   });
 
   useEffect(() => {
-    if (roleLoading || !auth.currentUser) return;
+    if (roleLoading || !auth.currentUser || !role) return;
     
     let q;
     // Base query for latest orders

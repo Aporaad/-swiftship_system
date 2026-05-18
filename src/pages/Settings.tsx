@@ -4,6 +4,7 @@ import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import { Save, Globe, Palette, Database, DollarSign, Building, X, Upload, CheckCircle } from 'lucide-react';
 import { useRole } from '../hooks/useRole';
 import { useSettings } from '../context/SettingsContext';
+import ConfirmModal from '../components/ConfirmModal';
 
 export default function Settings() {
   const [loading, setLoading] = useState(false);
@@ -13,6 +14,21 @@ export default function Settings() {
   const { role, hasPermission, loading: roleLoading } = useRole();
   const { settings: globalSettings, updateSettings, t } = useSettings();
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Confirmation Modal State
+  const [confirmConfig, setConfirmConfig] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void;
+    type: 'danger' | 'warning' | 'info';
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    onConfirm: () => {},
+    type: 'danger'
+  });
 
   const [localSettings, setLocalSettings] = useState(globalSettings);
 
@@ -107,34 +123,43 @@ export default function Settings() {
           throw new Error(globalSettings.language === 'ar' ? "ملف النسخة الاحتياطية غير صالح أو تالف." : "Invalid backup file.");
         }
 
-        if (!confirm(globalSettings.language === 'ar' ? "سيتم استبدال الإعدادات الحالية ودمج البيانات. هل أنت متأكد؟" : "This will overwrite settings and merge data. Are you sure?")) {
-          return;
-        }
+        setConfirmConfig({
+          isOpen: true,
+          title: globalSettings.language === 'ar' ? 'استيراد نسخة احتياطية' : 'Import Backup',
+          message: globalSettings.language === 'ar' ? "سيتم استبدال الإعدادات الحالية ودمج البيانات. هل أنت متأكد؟" : "This will overwrite settings and merge data. Are you sure?",
+          type: 'warning',
+          onConfirm: async () => {
+            try {
+              // Apply settings if present
+              if (data.settings) {
+                await updateSettings(data.settings);
+              }
 
-        // Apply settings if present
-        if (data.settings) {
-          await updateSettings(data.settings);
-        }
-
-        // Apply collection data if present
-        if (data.data) {
-          for (const colName in data.data) {
-            const items = data.data[colName];
-            if (Array.isArray(items)) {
-              const batch = writeBatch(db);
-              for (const item of items) {
-                const { id, ...itemData } = item;
-                if (id) {
-                  batch.set(doc(db, colName, id), itemData);
+              // Apply collection data if present
+              if (data.data) {
+                for (const colName in data.data) {
+                  const items = data.data[colName];
+                  if (Array.isArray(items)) {
+                    const batch = writeBatch(db);
+                    for (const item of items) {
+                      const { id, ...itemData } = item;
+                      if (id) {
+                        batch.set(doc(db, colName, id), itemData);
+                      }
+                    }
+                    await batch.commit();
+                  }
                 }
               }
-              await batch.commit();
+
+              alert(globalSettings.language === 'ar' ? "تم استيراد البيانات والإعدادات بنجاح!" : "Data and settings imported successfully!");
+              window.location.reload(); 
+            } catch (err) {
+              console.error('Import error:', err);
+              alert((globalSettings.language === 'ar' ? "خطأ في استيراد النسخة الاحتياطية: " : "Error importing backup: ") + (err as Error).message);
             }
           }
-        }
-
-        alert(globalSettings.language === 'ar' ? "تم استيراد البيانات والإعدادات بنجاح!" : "Data and settings imported successfully!");
-        window.location.reload(); 
+        });
       } catch (err) {
         console.error('Import error:', err);
         alert((globalSettings.language === 'ar' ? "خطأ في استيراد النسخة الاحتياطية: " : "Error importing backup: ") + (err as Error).message);
@@ -383,10 +408,16 @@ export default function Settings() {
                 <button 
                   type="button"
                   onClick={() => {
-                    if(confirm(globalSettings.language === 'ar' ? 'هل أنت متأكد؟ سيتم حذف جميع بيانات الكاش المحلية (لن يؤثر على البيانات في السيرفر)' : 'Are you sure? System cache will be cleared.')) {
-                       localStorage.clear();
-                       window.location.reload();
-                    }
+                    setConfirmConfig({
+                      isOpen: true,
+                      title: globalSettings.language === 'ar' ? 'مسح التخزين المؤقت' : 'Clear Cache',
+                      message: globalSettings.language === 'ar' ? 'هل أنت متأكد؟ سيتم حذف جميع بيانات الكاش المحلية (لن يؤثر على البيانات في السيرفر)' : 'Are you sure? System cache will be cleared.',
+                      type: 'danger',
+                      onConfirm: () => {
+                        localStorage.clear();
+                        window.location.reload();
+                      }
+                    });
                   }}
                   className="w-full bg-red-500/20 text-red-500 py-2 rounded-xl font-black text-[10px] hover:bg-red-500 hover:text-white transition-all border border-red-500/30"
                 >
@@ -397,6 +428,15 @@ export default function Settings() {
           </section>
         </div>
       </div>
+
+      <ConfirmModal 
+        isOpen={confirmConfig.isOpen}
+        onClose={() => setConfirmConfig({ ...confirmConfig, isOpen: false })}
+        onConfirm={confirmConfig.onConfirm}
+        title={confirmConfig.title}
+        message={confirmConfig.message}
+        type={confirmConfig.type}
+      />
     </div>
   );
 }

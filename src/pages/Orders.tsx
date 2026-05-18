@@ -1,19 +1,51 @@
 import React, { useState, useEffect } from 'react';
-import { collection, onSnapshot, orderBy, query, where, addDoc, doc, updateDoc, writeBatch, arrayUnion, getDoc } from 'firebase/firestore';
+import { collection, onSnapshot, orderBy, query, where, addDoc, doc, updateDoc, writeBatch, arrayUnion, getDoc, increment, deleteDoc } from 'firebase/firestore';
 import { db, auth, handleFirestoreError, OperationType, safeToDate } from '../lib/firebase';
-import { Plus, Search, Edit2, Truck, Activity, Trash2, DollarSign, CreditCard, Printer, Calculator } from 'lucide-react';
+import { Plus, Search, Edit2, Truck, Activity, Trash2, DollarSign, CreditCard, Printer, Calculator, Package, MapPin, X, AlertCircle } from 'lucide-react';
 import { format } from 'date-fns';
 import { ar } from 'date-fns/locale';
 import { useRole } from '../hooks/useRole';
+import { useSettings } from '../context/SettingsContext';
+import { notificationService } from '../services/notificationService';
+import ConfirmModal from '../components/ConfirmModal';
 
 export default function Orders() {
+  const { settings, t } = useSettings();
   const [orders, setOrders] = useState<any[]>([]);
   const { role, hasPermission, loading: roleLoading } = useRole();
   const [customers, setCustomers] = useState<any[]>([]);
   const [couriers, setCouriers] = useState<any[]>([]);
   const [sources, setSources] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // Confirmation Modal State
+  const [confirmConfig, setConfirmConfig] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void;
+    type: 'danger' | 'warning' | 'info';
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    onConfirm: () => {},
+    type: 'danger'
+  });
   const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [courierFilter, setCourierFilter] = useState('all');
+  const [sourceFilter, setSourceFilter] = useState('all');
+  const [sortBy, setSortBy] = useState('date-desc');
+  const [visibleColumns, setVisibleColumns] = useState({
+    tracking: true,
+    customer: true,
+    source: true,
+    shipping: true,
+    status: true,
+    financial: true,
+    actions: true
+  });
 
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isUpdateModalOpen, setIsUpdateModalOpen] = useState(false);
@@ -32,7 +64,13 @@ export default function Orders() {
     currency: 'USD',
     exchangeRate: '1',
     bankCommission: '0',
-    companyCommission: '0'
+    companyCommission: '0',
+    shippingCourierFee: '0',
+    shippingCourierCommission: '0',
+    deliveryCourierFee: '0',
+    deliveryCourierCommission: '0',
+    packagingFee: '0',
+    taxes: '0'
   });
 
   const [items, setItems] = useState<any[]>([{ productName: '', productUrl: '', quantity: '1', productPrice: '0', weight: '0', trackingNumber: '' }]);
@@ -81,6 +119,8 @@ export default function Orders() {
   });
 
   useEffect(() => {
+    if (roleLoading) return;
+
     const fetchGlobalSettings = async () => {
       try {
         const docSnap = await getDoc(doc(db, 'settings', 'general'));
@@ -110,17 +150,20 @@ export default function Orders() {
       setCustomers(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'customers'));
 
+    const unsubCouriers = onSnapshot(collection(db, 'couriers'), (snap) => {
+      setCouriers(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'couriers'));
+
     const unsubUsers = onSnapshot(collection(db, 'users'), (snap) => {
-      const allUsers = snap.docs.map(d => ({ id: d.id, ...d.data() } as any));
-      setCouriers(allUsers.filter(u => u.role === 'Courier' || u.role === 'Admin' || u.role === 'Employee')); 
+      // System users (Admins/Employees) only
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'users'));
 
     const unsubSources = onSnapshot(collection(db, 'sources'), (snap) => {
       setSources(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'sources'));
 
-    return () => { unsubOrders(); unsubCustomers(); unsubUsers(); unsubSources(); };
-  }, []);
+    return () => { unsubOrders(); unsubCustomers(); unsubCouriers(); unsubUsers(); unsubSources(); };
+  }, [roleLoading]);
 
   useEffect(() => {
     let unsubPayments = () => {};
@@ -173,22 +216,40 @@ export default function Orders() {
   const handleQuickAddCourier = async (targetField: string) => {
     if (!quickForm.name) return alert('الاسم مطلوب');
     try {
-      const docRef = await addDoc(collection(db, 'users'), { fullName: quickForm.name, email: `courier-${Date.now()}@example.com`, role: 'Courier', createdAt: Date.now() });
+      const docRef = await addDoc(collection(db, 'couriers'), { 
+        fullName: quickForm.name, 
+        email: `courier-${Date.now()}@example.com`, 
+        walletBalance: 0,
+        createdAt: Date.now() 
+      });
       if(targetField === 'shipping') setFormData({...formData, shippingCourierId: docRef.id});
       if(targetField === 'delivery') setFormData({...formData, deliveryCourierId: docRef.id});
       setIsQuickCourierOpen(false);
       setQuickForm({...quickForm, name: '', role: 'Courier', targetField: ''});
-    } catch(err) { handleFirestoreError(err, OperationType.CREATE, 'users'); }
+    } catch(err) { handleFirestoreError(err, OperationType.CREATE, 'couriers'); }
   };
 
   const calculatedProductCost = items.reduce((acc, item) => acc + (parseFloat(item.productPrice) || 0) * (parseInt(item.quantity) || 1), 0);
-  const calculatedShippingCost = shippings.reduce((acc, sh) => acc + (parseFloat(sh.cost) || 0) + (parseFloat(sh.packagingFee) || 0), 0);
+  const calculatedShippingCost = shippings.reduce((acc, sh) => acc + (parseFloat(sh.cost) || 0), 0);
+  const shippingPackagingTotal = shippings.reduce((acc, sh) => acc + (parseFloat(sh.packagingFee) || 0), 0);
   
+  const shippingCourierTotal = (parseFloat(formData.shippingCourierFee) || 0) + 
+                               (calculatedProductCost * (parseFloat(formData.shippingCourierCommission) || 0) / 100);
+  
+  const deliveryCourierTotal = (parseFloat(formData.deliveryCourierFee) || 0) + 
+                               (calculatedProductCost * (parseFloat(formData.deliveryCourierCommission) || 0) / 100);
+  
+  const taxesAndAdditions = (parseFloat(formData.taxes) || 0) + 
+                            (parseFloat(formData.bankCommission) || 0) + 
+                            (parseFloat(formData.packagingFee) || 0) + 
+                            shippingPackagingTotal;
+
   const totalCost = calculatedProductCost 
                     + calculatedShippingCost 
-                    + (parseFloat(formData.taxes) || 0)
-                    + (parseFloat(formData.bankCommission) || 0)
-                    + (parseFloat(formData.packagingFee) || 0);
+                    + taxesAndAdditions 
+                    + (parseFloat(formData.companyCommission) || 0) 
+                    + deliveryCourierTotal 
+                    + shippingCourierTotal;
                     
   const remainingAmount = totalCost - (parseFloat(formData.amountPaid) || 0);
 
@@ -209,19 +270,23 @@ export default function Orders() {
         shipping_courier_id: formData.shippingCourierId,
         shipping_courier_fee: parseFloat(formData.shippingCourierFee) || 0,
         shipping_courier_commission: parseFloat(formData.shippingCourierCommission) || 0,
+        shipping_courier_total: shippingCourierTotal,
         
         delivery_courier_id: formData.deliveryCourierId,
         delivery_courier_fee: parseFloat(formData.deliveryCourierFee) || 0,
         delivery_courier_commission: parseFloat(formData.deliveryCourierCommission) || 0,
+        delivery_courier_total: deliveryCourierTotal,
         
         currency: formData.currency,
         exchangeRate: parseFloat(formData.exchangeRate) || 1,
         
         productsTotal: calculatedProductCost,
         shippingTotal: calculatedShippingCost,
+        shippingPackagingTotal: shippingPackagingTotal,
         taxes: parseFloat(formData.taxes) || 0,
         bankCommission: parseFloat(formData.bankCommission) || 0,
-        packagingFee: parseFloat(formData.packagingFee) || 0,
+        systemPackagingFee: parseFloat(formData.packagingFee) || 0,
+        taxesAndAdditions: taxesAndAdditions,
         companyCommission: parseFloat(formData.companyCommission) || 0,
         totalCost,
         
@@ -244,6 +309,20 @@ export default function Orders() {
       });
 
       const batch = writeBatch(db);
+
+      // Update Courier Balances
+      if (formData.shippingCourierId && shippingCourierTotal > 0) {
+        batch.update(doc(db, 'couriers', formData.shippingCourierId), {
+          walletBalance: increment(shippingCourierTotal),
+          updatedAt: Date.now()
+        });
+      }
+      if (formData.deliveryCourierId && deliveryCourierTotal > 0) {
+        batch.update(doc(db, 'couriers', formData.deliveryCourierId), {
+          walletBalance: increment(deliveryCourierTotal),
+          updatedAt: Date.now()
+        });
+      }
       
       // Items
       items.forEach(item => {
@@ -283,6 +362,14 @@ export default function Orders() {
       });
 
       await batch.commit();
+      
+      notificationService.notify({
+        title: settings.language === 'ar' ? 'طلب جديد' : 'New Order',
+        message: settings.language === 'ar' ? `تم إنشاء طلب جديد برقم تتبع ${formData.trackingNumber}` : `New order created with tracking ${formData.trackingNumber}`,
+        type: 'success',
+        orderId: docRef.id
+      });
+
       setIsAddModalOpen(false);
       resetForm();
     } catch (err) {
@@ -303,27 +390,127 @@ export default function Orders() {
   }
 
   const handleDeleteOrder = async (orderId: string, trackingNumber: string) => {
-    const { deleteDoc } = await import('firebase/firestore');
-    if (!window.confirm(`هل أنت متأكد من رغبتك في حذف الطلب رقم ${trackingNumber} نهائياً؟ لا يمكن التراجع عن ذلك.`)) return;
-    try {
-      await deleteDoc(doc(db, 'orders', orderId));
-    } catch (e) {
-      handleFirestoreError(e, OperationType.DELETE, 'orders');
-    }
+    setConfirmConfig({
+      isOpen: true,
+      title: settings.language === 'ar' ? 'حذف الطلب' : 'Delete Order',
+      message: settings.language === 'ar' ? `هل أنت متأكد من رغبتك في حذف الطلب رقم ${trackingNumber} نهائياً؟ لا يمكن التراجع عن ذلك.` : `Are you sure you want to delete order #${trackingNumber}? This action cannot be undone.`,
+      type: 'danger',
+      onConfirm: async () => {
+        try {
+          const orderRef = doc(db, 'orders', orderId);
+          const orderSnap = await getDoc(orderRef);
+          
+          if (orderSnap.exists()) {
+            const orderData = orderSnap.data();
+            const batch = writeBatch(db);
+            
+            // Refund courier balances
+            if (orderData.shipping_courier_id && orderData.shipping_courier_total) {
+              batch.update(doc(db, 'couriers', orderData.shipping_courier_id), {
+                walletBalance: increment(-orderData.shipping_courier_total)
+              });
+            }
+            if (orderData.delivery_courier_id && orderData.delivery_courier_total) {
+              batch.update(doc(db, 'couriers', orderData.delivery_courier_id), {
+                walletBalance: increment(-orderData.delivery_courier_total)
+              });
+            }
+            
+            batch.delete(orderRef);
+            // Also delete from public tracking
+            batch.delete(doc(db, 'public_tracking', trackingNumber.trim()));
+            await batch.commit();
+          } else {
+            await deleteDoc(orderRef);
+            await deleteDoc(doc(db, 'public_tracking', trackingNumber.trim()));
+          }
+
+          notificationService.notify({
+            title: settings.language === 'ar' ? 'حذف طلب' : 'Order Deleted',
+            message: settings.language === 'ar' ? `تم حذف الطلب رقم ${trackingNumber} بنجاح` : `Order #${trackingNumber} has been deleted`,
+            type: 'warning'
+          });
+        } catch (err: any) {
+          console.error(err);
+          notificationService.notify({
+            title: settings.language === 'ar' ? 'خطأ في الحذف' : 'Delete Error',
+            message: settings.language === 'ar' ? `تعذر حذف الطلب: ${err.message}` : `Could not delete order: ${err.message}`,
+            type: 'error'
+          });
+        }
+      }
+    });
   };
 
   const handleUpdateFinancials = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedOrder) return;
     try {
+      const bc = parseFloat(financialData.bankCommission) || 0;
+      const cc = parseFloat(financialData.companyCommission) || 0;
+      const scf = parseFloat(financialData.shippingCourierFee) || 0;
+      const scc = parseFloat(financialData.shippingCourierCommission) || 0;
+      const dcf = parseFloat(financialData.deliveryCourierFee) || 0;
+      const dcc = parseFloat(financialData.deliveryCourierCommission) || 0;
+      const pf = parseFloat(financialData.packagingFee) || 0;
+      const tx = parseFloat(financialData.taxes) || 0;
+
+      const itemsTotal = selectedOrder.productsTotal || selectedOrder.itemsTotal || 0;
+      const shippingTotal = selectedOrder.shippingTotal || 0;
+      const shippingPackagingTotal = selectedOrder.shippingPackagingTotal || 0;
+
+      const shippingCourierTotal = scf + (itemsTotal * scc / 100);
+      const deliveryCourierTotal = dcf + (itemsTotal * dcc / 100);
+      const taxesAndAdditions = tx + bc + pf + shippingPackagingTotal;
+      const newTotalCost = itemsTotal + shippingTotal + taxesAndAdditions + cc + deliveryCourierTotal + shippingCourierTotal;
+
+      const batch = writeBatch(db);
+      
+      // Update Courier balances (subtract old, add new)
+      if (selectedOrder.shipping_courier_id) {
+        const oldEarned = selectedOrder.shipping_courier_total || 0;
+        const diff = shippingCourierTotal - oldEarned;
+        if (diff !== 0) {
+          batch.update(doc(db, 'couriers', selectedOrder.shipping_courier_id), {
+            walletBalance: increment(diff)
+          });
+        }
+      }
+      
+      // Note: We might need deliveryCourierTotal adjustment too if we supported changing its fee in this modal.
+      // Current financialData only has deliveryCourierFee.
+      if (selectedOrder.delivery_courier_id) {
+        const oldEarned = selectedOrder.delivery_courier_total || 0;
+        const diff = deliveryCourierTotal - oldEarned;
+        if (diff !== 0) {
+          batch.update(doc(db, 'couriers', selectedOrder.delivery_courier_id), {
+            walletBalance: increment(diff)
+          });
+        }
+      }
+
       const updates = {
         currency: financialData.currency,
-        exchangeRate: financialData.exchangeRate,
-        bankCommission: financialData.bankCommission,
-        companyCommission: financialData.companyCommission,
+        exchangeRate: parseFloat(financialData.exchangeRate) || 1,
+        bankCommission: bc,
+        companyCommission: cc,
+        shipping_courier_fee: scf,
+        shipping_courier_commission: scc,
+        shipping_courier_total: shippingCourierTotal,
+        delivery_courier_fee: dcf,
+        delivery_courier_commission: dcc,
+        delivery_courier_total: deliveryCourierTotal,
+        systemPackagingFee: pf,
+        taxes: tx,
+        taxesAndAdditions: taxesAndAdditions,
+        totalCost: newTotalCost,
+        remainingAmount: newTotalCost - (selectedOrder.paidAmount || 0),
         updatedAt: Date.now()
       };
-      await updateDoc(doc(db, 'orders', selectedOrder.id), updates);
+      
+      batch.update(doc(db, 'orders', selectedOrder.id), updates);
+      await batch.commit();
+
       setIsFinancialModalOpen(false);
       setSelectedOrder({ ...selectedOrder, ...updates });
     } catch (e) {
@@ -367,6 +554,13 @@ export default function Orders() {
       });
 
       await batch.commit();
+      
+      notificationService.notify({
+        title: settings.language === 'ar' ? 'دفعة مالية جديدة' : 'New Payment Received',
+        message: settings.language === 'ar' ? `تم استلام مبلغ $${amount.toFixed(2)} للطلب ${selectedOrder.trackingNumber}` : `Received $${amount.toFixed(2)} for order #${selectedOrder.trackingNumber}`,
+        type: 'success',
+        orderId: selectedOrder.id
+      });
       
       setPaymentData({ amount: '', paymentMethod: 'Cash', notes: '' });
       // Update local state temporarily for UX, or let onSnapshot handle it (it does via orders listener, but we might need to wait for it).
@@ -425,11 +619,12 @@ export default function Orders() {
               <div class="title">فاتورة ضريبية</div>
               <div>رقم التتبع: <strong>${order.trackingNumber}</strong></div>
               <div>التاريخ: ${order.createdAt ? format(order.createdAt, 'yyyy-MM-dd') : '-'}</div>
+              <div>حالة الطلب: <strong>${settings.language === 'ar' ? ORDER_STATUSES.find(s => s.id === (order.orderStatus || order.order_status))?.labelAr : ORDER_STATUSES.find(s => s.id === (order.orderStatus || order.order_status))?.labelEn}</strong></div>
               ${companyInfo.taxId ? `<div>الرقم الضريبي: <strong>${companyInfo.taxId}</strong></div>` : ''}
             </div>
             <div>
               <div class="title">بيانات العميل</div>
-              <div>الاسم: <strong>${customerMap[order.customer_id] || '-'}</strong></div>
+              <div>الاسم: <strong>${customerMap[order.customerId] || '-'}</strong></div>
               <div>العنوان: ${order.shippingInfo?.destination || '-'}</div>
             </div>
           </div>
@@ -456,24 +651,57 @@ export default function Orders() {
           <div class="totals">
             <table>
               <tr>
-                <td>قيمة المشتريات:</td>
-                <td dir="ltr">${companyInfo.currencySymbol || '$'}${(order.itemsTotal || 0).toFixed(2)}</td>
+                <td>إجمالي المنتجات:</td>
+                <td dir="ltr">${order.currency || '$'}${(order.productsTotal || order.itemsTotal || 0).toFixed(2)}</td>
               </tr>
               <tr>
-                <td>أجور الشحن:</td>
-                <td dir="ltr">${companyInfo.currencySymbol || '$'}${(order.shippingTotal || 0).toFixed(2)}</td>
+                <td>تكلفة الشحن الدولي:</td>
+                <td dir="ltr">${order.currency || '$'}${(order.shippingTotal || 0).toFixed(2)}</td>
               </tr>
+              <tr>
+                <td>رسوم تغليف (شركة الشحن):</td>
+                <td dir="ltr">${order.currency || '$'}${(order.shippingPackagingTotal || 0).toFixed(2)}</td>
+              </tr>
+              <tr>
+                <td>رسوم مندوب الشحن:</td>
+                <td dir="ltr">${order.currency || '$'}${(order.shipping_courier_total || 0).toFixed(2)}</td>
+              </tr>
+              <tr>
+                <td>رسوم مندوب التوصيل:</td>
+                <td dir="ltr">${order.currency || '$'}${(order.delivery_courier_total || order.delivery_courier_fee || 0).toFixed(2)}</td>
+              </tr>
+              <tr>
+                <td>رسوم تغليف (النظام):</td>
+                <td dir="ltr">${order.currency || '$'}${(order.systemPackagingFee || order.packagingFee || 0).toFixed(2)}</td>
+              </tr>
+              <tr>
+                <td>الضرائب:</td>
+                <td dir="ltr">${order.currency || '$'}${(order.taxes || 0).toFixed(2)}</td>
+              </tr>
+              <tr>
+                <td>عمولة البنك:</td>
+                <td dir="ltr">${order.currency || '$'}${(order.bankCommission || 0).toFixed(2)}</td>
+              </tr>
+              <tr>
+                <td>عمولة الشركة:</td>
+                <td dir="ltr">${order.currency || '$'}${(order.companyCommission || 0).toFixed(2)}</td>
+              </tr>
+              ${order.exchangeRate && order.exchangeRate !== 1 ? `
+              <tr>
+                <td>سعر الصرف:</td>
+                <td dir="ltr">${order.exchangeRate}</td>
+              </tr>` : ''}
               <tr class="bold">
-                <td>الإجمالي المستحق:</td>
-                <td dir="ltr">${companyInfo.currencySymbol || '$'}${(order.totalCost || 0).toFixed(2)}</td>
+                <td>اجمالي التكاليف الكلية:</td>
+                <td dir="ltr">${order.currency || '$'}${(order.totalCost || 0).toFixed(2)}</td>
               </tr>
-              <tr>
+              <tr style="color: #059669; font-weight: bold;">
                 <td>المبلغ المدفوع:</td>
-                <td dir="ltr" style="color: green">${companyInfo.currencySymbol || '$'}${(order.paidAmount || 0).toFixed(2)}</td>
+                <td dir="ltr">${order.currency || '$'}${(order.paidAmount || 0).toFixed(2)}</td>
               </tr>
-              <tr>
+              <tr style="color: #dc2626; font-weight: bold;">
                 <td>المبلغ المتبقي:</td>
-                <td dir="ltr" style="color: red">${companyInfo.currencySymbol || '$'}${(order.remainingAmount || 0).toFixed(2)}</td>
+                <td dir="ltr">${order.currency || '$'}${(order.remainingAmount || 0).toFixed(2)}</td>
               </tr>
             </table>
           </div>
@@ -505,43 +733,30 @@ export default function Orders() {
       const tc = selectedOrder.totalCost || 0;
       let paymentStatus = 'Unpaid';
       if (newAmountPaid >= tc) paymentStatus = 'Paid';
-      else if (newAmountPaid > 0) paymentStatus = 'Partial';
+      else if (newAmountPaid > 0) paymentStatus = 'Partial Paid';
 
       const updates = {
         orderStatus: updateData.orderStatus,
-        paid_amount: newAmountPaid, // Fix DB field consistency: we used paidAmount in creation
-        remaining_amount: tc - newAmountPaid,
-        payment_status: paymentStatus, // Fix: paymentStatus used in creation
+        order_status: updateData.orderStatus, // Keep both for safety
+        paidAmount: newAmountPaid,
+        remainingAmount: tc - newAmountPaid,
+        paymentStatus,
         notes: updateData.notes,
         updatedAt: Date.now()
       };
 
-      // Ensure consistent field naming in update as we did in create: 
-      // We used paidAmount, paymentStatus, remainingAmount in orderPayload.
-      const compatibleUpdates = {
-        order_status: updateData.orderStatus,
-        paidAmount: newAmountPaid,
-        paymentStatus,
-        remainingAmount: tc - newAmountPaid,
-        notes: updateData.notes,
-        updatedAt: Date.now()
-      }
+      await updateDoc(doc(db, 'orders', selectedOrder.id), updates);
 
-      await updateDoc(doc(db, 'orders', selectedOrder.id), compatibleUpdates);
-
-      if (updateData.orderStatus !== selectedOrder.orderStatus || updateData.location) {
+      if (updateData.orderStatus !== (selectedOrder.orderStatus || selectedOrder.order_status) || updateData.location) {
         const trackPayload = { status: updateData.orderStatus, location: updateData.location || 'تحديث حالة الشحنة', timestamp: Date.now(), updatedBy: auth.currentUser?.uid || 'System' };
         await addDoc(collection(db, `orders/${selectedOrder.id}/trackingUpdates`), trackPayload);
         await updateDoc(doc(db, 'public_tracking', selectedOrder.trackingNumber.trim()), { status: updateData.orderStatus, history: arrayUnion(trackPayload) });
         
-        // Add a global notification for track update
-        await addDoc(collection(db, 'notifications'), {
-          type: 'order',
-          title: 'تحديث حالة طلب',
-          message: `تم تحديث حالة الطلب رقم (${selectedOrder.trackingNumber}) إلى: ${updateData.orderStatus}`,
-          userId: 'global',
-          createdAt: Date.now(),
-          read: false
+        notificationService.notify({
+          title: settings.language === 'ar' ? 'تحديث حالة طلب' : 'Order Status Updated',
+          message: settings.language === 'ar' ? `تم تحديث حالة الطلب رقم (${selectedOrder.trackingNumber}) إلى: ${updateData.orderStatus}` : `Order #${selectedOrder.trackingNumber} status updated to: ${updateData.orderStatus}`,
+          type: 'info',
+          orderId: selectedOrder.id
         });
       }
 
@@ -550,19 +765,44 @@ export default function Orders() {
     } catch (err) { handleFirestoreError(err, OperationType.UPDATE, 'orders'); }
   };
 
-  const filteredOrders = orders.filter(o => {
-    const searchMatch = o.trackingNumber?.toLowerCase().includes(search.toLowerCase()) || 
-                      (customerMap[o.customerId] || '').toLowerCase().includes(search.toLowerCase());
-    
-    if (!searchMatch) return false;
-    
-    // Role based filtering
-    if (role === 'Courier') {
-      return o.delivery_courier_id === auth.currentUser?.uid;
-    }
-    
-    return true;
-  });
+  const ORDER_STATUSES = [
+    { id: 'Pending', labelAr: 'قيد الانتظار', labelEn: 'Pending', color: 'bg-slate-100 text-slate-600' },
+    { id: 'Ordered', labelAr: 'تم الطلب', labelEn: 'Ordered', color: 'bg-blue-100 text-blue-600' },
+    { id: 'Processing', labelAr: 'قيد التجهيز', labelEn: 'Processing', color: 'bg-indigo-100 text-indigo-600' },
+    { id: 'Shipped', labelAr: 'تم الشحن', labelEn: 'Shipped', color: 'bg-purple-100 text-purple-600' },
+    { id: 'In Transit', labelAr: 'بالشحن الدولي', labelEn: 'In Transit', color: 'bg-cyan-100 text-cyan-600' },
+    { id: 'In Local Warehouse', labelAr: 'وصل المخزن المحلي', labelEn: 'In Local Warehouse', color: 'bg-orange-100 text-orange-600' },
+    { id: 'Out For Delivery', labelAr: 'خرج للتسليم', labelEn: 'Out For Delivery', color: 'bg-amber-100 text-amber-600' },
+    { id: 'Delivered', labelAr: 'تم التسليم', labelEn: 'Delivered', color: 'bg-emerald-100 text-emerald-600' },
+    { id: 'Returned', labelAr: 'مرتجع', labelEn: 'Returned', color: 'bg-rose-100 text-rose-600' },
+    { id: 'Cancelled', labelAr: 'ملغي', labelEn: 'Cancelled', color: 'bg-red-100 text-red-600' },
+  ];
+
+  const getStatusColor = (status: string) => {
+    return ORDER_STATUSES.find(s => s.id === status)?.color || 'bg-slate-100 text-slate-600';
+  };
+
+  const filteredOrders = orders
+    .filter(o => {
+      const customerName = customerMap[o.customerId] || '';
+      const searchMatch = (o.trackingNumber?.toLowerCase().includes(search.toLowerCase()) || 
+                          customerName.toLowerCase().includes(search.toLowerCase()));
+      
+      const statusMatch = statusFilter === 'all' || o.orderStatus === statusFilter || o.order_status === statusFilter;
+      const courierMatch = courierFilter === 'all' || o.shipping_courier_id === courierFilter || o.delivery_courier_id === courierFilter;
+      const sourceMatch = sourceFilter === 'all' || o.orderSource === sourceFilter;
+      
+      const roleMatch = role === 'Courier' ? o.delivery_courier_id === auth.currentUser?.uid : true;
+
+      return searchMatch && statusMatch && courierMatch && sourceMatch && roleMatch;
+    })
+    .sort((a, b) => {
+      if (sortBy === 'date-desc') return (b.createdAt?.getTime() || 0) - (a.createdAt?.getTime() || 0);
+      if (sortBy === 'date-asc') return (a.createdAt?.getTime() || 0) - (b.createdAt?.getTime() || 0);
+      if (sortBy === 'total-desc') return (b.totalCost || 0) - (a.totalCost || 0);
+      if (sortBy === 'total-asc') return (a.totalCost || 0) - (b.totalCost || 0);
+      return 0;
+    });
 
   if (roleLoading) return <div className="p-8 text-center">جاري التحقق من الصلاحيات...</div>;
 
@@ -591,16 +831,73 @@ export default function Orders() {
       </div>
 
       <div className="bg-white dark:bg-slate-900 rounded-3xl shadow-sm border border-slate-200 dark:border-slate-800 flex flex-col overflow-hidden transition-colors">
-        <div className="p-6 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center gap-4">
-          <div className="relative flex-1 max-w-md">
+        <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex flex-wrap gap-4 items-center">
+          <div className="relative flex-1 min-w-[250px]">
             <Search className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" />
             <input 
               type="text" 
               placeholder={t('searchOrders')} 
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="w-full pr-11 pl-4 py-3 border border-slate-200 dark:border-slate-800 rounded-2xl focus:ring-2 focus:ring-blue-500 outline-none text-sm bg-slate-50 dark:bg-slate-950 dark:text-slate-200 dark:placeholder-slate-600 transition-all focus:bg-white dark:focus:bg-slate-900"
+              className="w-full pr-11 pl-4 py-2.5 border border-slate-200 dark:border-slate-800 rounded-2xl focus:ring-2 focus:ring-blue-500 outline-none text-sm bg-slate-50 dark:bg-slate-950 dark:text-slate-200 dark:placeholder-slate-600 transition-all focus:bg-white dark:focus:bg-slate-900"
             />
+          </div>
+
+          <select 
+            value={statusFilter} 
+            onChange={e => setStatusFilter(e.target.value)}
+            className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            <option value="all">{settings.language === 'ar' ? 'كل الحالات' : 'All Statuses'}</option>
+            {ORDER_STATUSES.map(s => <option key={s.id} value={s.id}>{settings.language === 'ar' ? s.labelAr : s.labelEn}</option>)}
+          </select>
+
+          <select 
+            value={courierFilter} 
+            onChange={e => setCourierFilter(e.target.value)}
+            className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            <option value="all">{settings.language === 'ar' ? 'كل المناديب' : 'All Couriers'}</option>
+            {couriers.map(c => <option key={c.id} value={c.id}>{c.fullName}</option>)}
+          </select>
+
+          <select 
+            value={sortBy} 
+            onChange={e => setSortBy(e.target.value)}
+            className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            <option value="date-desc">{settings.language === 'ar' ? 'الأحدث أولاً' : 'Newest'}</option>
+            <option value="date-asc">{settings.language === 'ar' ? 'الأقدم أولاً' : 'Oldest'}</option>
+            <option value="total-desc">{settings.language === 'ar' ? 'الأعلى ميزانية' : 'Highest Cost'}</option>
+            <option value="total-asc">{settings.language === 'ar' ? 'الأقل ميزانية' : 'Lowest Cost'}</option>
+          </select>
+
+          <div className="relative group">
+            <button className="flex items-center gap-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-4 py-2 rounded-xl text-xs font-bold">
+              <Activity className="w-4 h-4" />
+              <span>{settings.language === 'ar' ? 'الأعمدة' : 'Columns'}</span>
+            </button>
+            <div className="absolute left-0 mt-2 w-48 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl shadow-xl p-4 hidden group-hover:block z-50">
+              {Object.keys(visibleColumns).map((col) => (
+                <label key={col} className="flex items-center gap-2 mb-2 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700 p-1 rounded transition-colors">
+                  <input 
+                    type="checkbox" 
+                    checked={visibleColumns[col as keyof typeof visibleColumns]} 
+                    onChange={() => setVisibleColumns({...visibleColumns, [col]: !visibleColumns[col as keyof typeof visibleColumns]})}
+                    className="rounded text-blue-600 focus:ring-0"
+                  />
+                  <span className="text-[10px] font-black uppercase tracking-tighter">
+                    {col === 'tracking' ? (settings.language === 'ar' ? 'التتبع' : 'Tracking') :
+                     col === 'customer' ? (settings.language === 'ar' ? 'العميل' : 'Customer') :
+                     col === 'source' ? (settings.language === 'ar' ? 'المصدر' : 'Source') :
+                     col === 'shipping' ? (settings.language === 'ar' ? 'المناديب' : 'Couriers') :
+                     col === 'status' ? (settings.language === 'ar' ? 'الحالة' : 'Status') :
+                     col === 'financial' ? (settings.language === 'ar' ? 'القيم' : 'Financial') :
+                     (settings.language === 'ar' ? 'أدوات' : 'Actions')}
+                  </span>
+                </label>
+              ))}
+            </div>
           </div>
         </div>
         {loading ? <div className="p-8 text-center text-slate-500">{settings.language === 'ar' ? 'جاري التحميل...' : 'Loading...'}</div> : (
@@ -608,52 +905,105 @@ export default function Orders() {
             <table className="w-full text-start">
               <thead className="bg-slate-50 dark:bg-slate-950 text-slate-500 dark:text-slate-500 text-[10px] font-black uppercase tracking-widest border-b border-slate-100 dark:border-slate-800">
                 <tr>
-                  <th className="p-4">{t('trackingNumber')}</th>
-                  <th className="p-4">{t('customer')}</th>
-                  <th className="p-4">{t('orderSource')}</th>
-                  <th className="p-4">{settings.language === 'ar' ? 'التكلفة / المدفوع' : 'Cost / Paid'}</th>
-                  <th className="p-4">{t('courier_assigned')}</th>
-                  <th className="p-4">{t('date')}</th>
-                  <th className="p-4 text-left">{settings.language === 'ar' ? 'إجراءات' : 'Actions'}</th>
+                  {visibleColumns.tracking && <th className="p-4 text-right">{t('trackingNumber')}</th>}
+                  {visibleColumns.customer && <th className="p-4 text-right">{t('customer')}</th>}
+                  {visibleColumns.source && <th className="p-4 text-right">{t('orderSource')}</th>}
+                  {visibleColumns.shipping && <th className="p-4 text-right">{t('courier_assigned')}</th>}
+                  {visibleColumns.status && <th className="p-4 text-center">{settings.language === 'ar' ? 'حالة الطلب' : 'Status'}</th>}
+                  {visibleColumns.financial && <th className="p-4 text-left">{settings.language === 'ar' ? 'التكلفة / المدفوع' : 'Cost / Paid'}</th>}
+                  {visibleColumns.actions && <th className="p-4 text-left">{settings.language === 'ar' ? 'إجراءات' : 'Actions'}</th>}
                 </tr>
               </thead>
-              <tbody className="text-sm divide-y divide-slate-100">
+              <tbody className="text-sm divide-y divide-slate-100 dark:divide-slate-800">
                 {filteredOrders.map(order => (
-                  <tr key={order.id} className="hover:bg-slate-50">
-                    <td className="p-4 font-mono font-bold text-slate-700">{order.trackingNumber}</td>
-                    <td className="p-4 font-bold text-slate-900">{customerMap[order.customerId] || '-'}</td>
-                    <td className="p-4">{sourceMap[order.orderSource] || '-'}</td>
-                    <td className="p-4">
-                      <div className="font-bold text-slate-800" dir="ltr">${order.totalCost?.toFixed(2)}</div>
-                      <div className="text-xs text-emerald-600 font-bold" dir="ltr">Paid: ${order.paidAmount?.toFixed(2)}</div>
-                    </td>
-                    <td className="p-4">{courierMap[order.delivery_courier_id] || '-'}</td>
-                    <td className="p-4 text-xs text-slate-500">{order.createdAt ? format(order.createdAt, 'dd MMM yyyy') : '-'}</td>
-                    <td className="p-4 flex gap-2 justify-end">
-                      <button title="طباعة الفاتورة" onClick={() => handlePrintInvoice(order)} className="text-purple-600 hover:text-purple-800 bg-purple-50 hover:bg-purple-100 p-2 rounded-lg">
-                        <Printer className="w-4 h-4" />
-                      </button>
-                      {hasPermission('manage_finance') && (
-                        <button title="إدارة المدفوعات" onClick={() => { setSelectedOrder(order); setIsPaymentModalOpen(true); }} className="text-emerald-600 hover:text-emerald-800 bg-emerald-50 hover:bg-emerald-100 p-2 rounded-lg">
-                          <DollarSign className="w-4 h-4" />
-                        </button>
-                      )}
-                      {hasPermission('manage_finance') && (
-                        <button title="التفاصيل المالية" onClick={() => { setSelectedOrder(order); setFinancialData({ currency: order.currency || 'USD', exchangeRate: order.exchangeRate?.toString() || '1', bankCommission: order.bankCommission?.toString() || '0', companyCommission: order.companyCommission?.toString() || '0' }); setIsFinancialModalOpen(true); }} className="text-amber-600 hover:text-amber-800 bg-amber-50 hover:bg-amber-100 p-2 rounded-lg">
-                          <Calculator className="w-4 h-4" />
-                        </button>
-                      )}
-                      {(hasPermission('update_order_status') || hasPermission('manage_orders')) && (
-                        <button title="تحديث الحالة" onClick={() => { setSelectedOrder(order); setUpdateData({ orderStatus: order.order_status || order.orderStatus, location: '', amountPaid: order.paidAmount?.toString() || '0', notes: order.notes || '' }); setIsUpdateModalOpen(true); }} className="text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 p-2 rounded-lg">
-                          <Activity className="w-4 h-4" />
-                        </button>
-                      )}
-                      {hasPermission('delete_orders') && (
-                        <button title="حذف الطلب" onClick={() => handleDeleteOrder(order.id, order.trackingNumber)} className="text-red-600 hover:text-red-800 bg-red-50 hover:bg-red-100 p-2 rounded-lg">
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      )}
-                    </td>
+                  <tr key={order.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors group">
+                    {visibleColumns.tracking && (
+                      <td className="p-4">
+                        <div className="flex flex-col">
+                          <span className="font-mono font-bold text-slate-700 dark:text-slate-300">{order.trackingNumber}</span>
+                          <span className="text-[10px] text-slate-400 font-bold">{order.createdAt ? format(order.createdAt, 'dd MMM yyyy') : '-'}</span>
+                        </div>
+                      </td>
+                    )}
+                    {visibleColumns.customer && (
+                      <td className="p-4 font-bold text-slate-900 dark:text-slate-200">{customerMap[order.customerId] || '-'}</td>
+                    )}
+                    {visibleColumns.source && (
+                      <td className="p-4 text-slate-600 dark:text-slate-400 font-medium">{sourceMap[order.orderSource] || '-'}</td>
+                    )}
+                    {visibleColumns.shipping && (
+                      <td className="p-4 text-xs font-bold">
+                        <div className="flex flex-col gap-1">
+                          <span className="text-slate-500 flex items-center gap-1"><Truck className="w-3 h-3" /> {courierMap[order.shipping_courier_id] || '-'}</span>
+                          <span className="text-emerald-600 flex items-center gap-1"><MapPin className="w-3 h-3" /> {courierMap[order.delivery_courier_id] || '-'}</span>
+                        </div>
+                      </td>
+                    )}
+                    {visibleColumns.status && (
+                      <td className="p-4 text-center">
+                        <span className={`px-3 py-1 rounded-full text-[10px] font-black ${getStatusColor(order.orderStatus || order.order_status)}`}>
+                          {settings.language === 'ar' ? ORDER_STATUSES.find(s => s.id === (order.orderStatus || order.order_status))?.labelAr : ORDER_STATUSES.find(s => s.id === (order.orderStatus || order.order_status))?.labelEn}
+                        </span>
+                      </td>
+                    )}
+                    {visibleColumns.financial && (
+                      <td className="p-4 text-left">
+                        <div className="flex flex-col items-end">
+                          <div className="font-bold text-slate-800 dark:text-slate-200" dir="ltr">{order.currency || 'USD'} {order.totalCost?.toFixed(2)}</div>
+                          <div className={`text-[10px] font-black ${order.remainingAmount <= 0 ? 'text-emerald-500' : 'text-amber-500'}`} dir="ltr">
+                            {order.remainingAmount <= 0 ? 'PAID' : `DUE: ${order.remainingAmount?.toFixed(2)}`}
+                          </div>
+                        </div>
+                      </td>
+                    )}
+                    {visibleColumns.actions && (
+                      <td className="p-4 text-left">
+                        <div className="flex gap-2 justify-end opacity-0 group-hover:opacity-100 transition-opacity">
+                          <button title="طباعة الفاتورة" onClick={() => handlePrintInvoice(order)} className="text-purple-600 hover:text-purple-800 bg-purple-50 hover:bg-purple-100 p-2 rounded-xl transition-all">
+                            <Printer className="w-4 h-4" />
+                          </button>
+                          {hasPermission('manage_finance') && (
+                            <button title="إدارة المدفوعات" onClick={() => { setSelectedOrder(order); setIsPaymentModalOpen(true); }} className="text-emerald-600 hover:text-emerald-800 bg-emerald-50 hover:bg-emerald-100 p-2 rounded-xl transition-all">
+                              <DollarSign className="w-4 h-4" />
+                            </button>
+                          )}
+                          {hasPermission('manage_finance') && (
+                            <button 
+                              title="التفاصيل المالية" 
+                              onClick={() => { 
+                                setSelectedOrder(order); 
+                                setFinancialData({ 
+                                  currency: order.currency || 'USD', 
+                                  exchangeRate: order.exchangeRate?.toString() || '1', 
+                                  bankCommission: order.bankCommission?.toString() || '0', 
+                                  companyCommission: order.companyCommission?.toString() || '0',
+                                  shippingCourierFee: (order.shipping_courier_fee || 0).toString(),
+                                  shippingCourierCommission: (order.shipping_courier_commission || 0).toString(),
+                                  deliveryCourierFee: (order.delivery_courier_fee || 0).toString(),
+                                  deliveryCourierCommission: (order.delivery_courier_commission || 0).toString(),
+                                  packagingFee: (order.systemPackagingFee || order.packagingFee || 0).toString(),
+                                  taxes: (order.taxes || 0).toString()
+                                }); 
+                                setIsFinancialModalOpen(true); 
+                              }} 
+                              className="text-amber-600 hover:text-amber-800 bg-amber-50 hover:bg-emerald-100 p-2 rounded-xl transition-all"
+                            >
+                              <Calculator className="w-4 h-4" />
+                            </button>
+                          )}
+                          {(hasPermission('update_order_status') || hasPermission('manage_orders')) && (
+                            <button title="تحديث الحالة" onClick={() => { setSelectedOrder(order); setUpdateData({ orderStatus: order.order_status || order.orderStatus, location: '', amountPaid: order.paidAmount?.toString() || '0', notes: order.notes || '' }); setIsUpdateModalOpen(true); }} className="text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 p-2 rounded-xl transition-all">
+                              <Activity className="w-4 h-4" />
+                            </button>
+                          )}
+                          {hasPermission('delete_orders') && (
+                            <button title="حذف الطلب" onClick={() => handleDeleteOrder(order.id, order.trackingNumber)} className="text-red-600 hover:text-red-800 bg-red-50 hover:bg-red-100 p-2 rounded-xl transition-all">
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
@@ -980,14 +1330,31 @@ export default function Orders() {
 
                   <div className="bg-emerald-900 text-white rounded-2xl p-6 flex flex-col md:flex-row items-center justify-between shadow-lg">
                      <div className="flex-1 space-y-2 w-full">
-                       <div className="flex justify-between text-emerald-200/70 text-sm"><span>إجمالي المنتجات:</span> <span dir="ltr">${calculatedProductCost.toFixed(2)}</span></div>
-                       <div className="flex justify-between text-emerald-200/70 text-sm border-b border-emerald-800 pb-2"><span>الشحن والضرائب والإضافات:</span> <span dir="ltr">+${(totalCost - calculatedProductCost).toFixed(2)}</span></div>
-                       <div className="flex justify-between text-lg font-bold pt-1 text-emerald-300"><span>المبلغ المتبقي للتحصيل:</span> <span dir="ltr">${remainingAmount.toFixed(2)}</span></div>
+                       <div className="flex justify-between text-emerald-200/70 text-sm">
+                         <span>إجمالي المنتجات:</span> 
+                         <span dir="ltr">${formData.currency} {calculatedProductCost.toFixed(2)}</span>
+                       </div>
+                       <div className="flex justify-between text-emerald-200/70 text-sm">
+                         <span>تكاليف الشحن الدولي:</span> 
+                         <span dir="ltr">+ {calculatedShippingCost.toFixed(2)}</span>
+                       </div>
+                       <div className="flex justify-between text-emerald-200/70 text-sm">
+                         <span>إجمالي رسوم المندوبين:</span> 
+                         <span dir="ltr">+ {(shippingCourierTotal + deliveryCourierTotal).toFixed(2)}</span>
+                       </div>
+                       <div className="flex justify-between text-emerald-200/70 text-sm border-b border-emerald-800 pb-2">
+                         <span>الضرائب، التغليف والعمولات:</span> 
+                         <span dir="ltr">+ {(taxesAndAdditions + (parseFloat(formData.companyCommission) || 0)).toFixed(2)}</span>
+                       </div>
+                       <div className="flex justify-between text-lg font-bold pt-1 text-emerald-300">
+                         <span>المبلغ المتبقي للتحصيل:</span> 
+                         <span dir="ltr">${formData.currency} {remainingAmount.toFixed(2)}</span>
+                       </div>
                      </div>
-                     <div className="w-px h-24 bg-emerald-800 mx-8 hidden md:block"></div>
+                     <div className="w-px h-32 bg-emerald-800 mx-8 hidden md:block"></div>
                      <div className="text-center mt-6 md:mt-0">
                        <p className="text-emerald-100 mb-1 text-sm font-medium">إجمالي التكلفة الكلية للطلب</p>
-                       <p className="text-4xl font-black" dir="ltr">${totalCost.toFixed(2)}</p>
+                       <p className="text-4xl font-black" dir="ltr">${formData.currency} {totalCost.toFixed(2)}</p>
                      </div>
                   </div>
 
@@ -1176,23 +1543,48 @@ export default function Orders() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-sm font-bold text-slate-700 mb-1">العملة</label>
-                    <select value={financialData.currency} onChange={e => setFinancialData({...financialData, currency: e.target.value})} className="w-full border border-slate-200 rounded-xl p-3 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-amber-500 outline-none">
-                      <option value="USD">USD</option>
-                      <option value="SAR">SAR</option>
-                      <option value="TRY">TRY</option>
-                      <option value="EUR">EUR</option>
-                    </select>
+                    <input value={financialData.currency} onChange={e => setFinancialData({...financialData, currency: e.target.value})} className="w-full border border-slate-200 rounded-xl p-3 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-amber-500 outline-none" />
                   </div>
                   <div>
                     <label className="block text-sm font-bold text-slate-700 mb-1">سعر الصرف</label>
                     <input type="number" min="0" step="0.0001" value={financialData.exchangeRate} onChange={e => setFinancialData({...financialData, exchangeRate: e.target.value})} className="w-full border border-slate-200 rounded-xl p-3 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-amber-500 outline-none" dir="ltr" />
                   </div>
+                  <div className="md:col-span-2 border-t pt-2 mt-2">
+                    <h4 className="text-xs font-black text-slate-400 uppercase mb-3">تفاصيل المندوبين</h4>
+                  </div>
                   <div>
-                    <label className="block text-sm font-bold text-slate-700 mb-1">عمولة البنك (%)</label>
+                    <label className="block text-sm font-bold text-slate-700 mb-1">رسوم مندوب الشحن</label>
+                    <input type="number" step="0.01" value={financialData.shippingCourierFee} onChange={e => setFinancialData({...financialData, shippingCourierFee: e.target.value})} className="w-full border border-slate-200 rounded-xl p-3 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-amber-500 outline-none" dir="ltr" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-bold text-slate-700 mb-1">عمولة مندوب الشحن (%)</label>
+                    <input type="number" step="0.1" value={financialData.shippingCourierCommission} onChange={e => setFinancialData({...financialData, shippingCourierCommission: e.target.value})} className="w-full border border-slate-200 rounded-xl p-3 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-amber-500 outline-none" dir="ltr" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-bold text-slate-700 mb-1">رسوم التوصيل</label>
+                    <input type="number" step="0.01" value={financialData.deliveryCourierFee} onChange={e => setFinancialData({...financialData, deliveryCourierFee: e.target.value})} className="w-full border border-slate-200 rounded-xl p-3 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-amber-500 outline-none" dir="ltr" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-bold text-slate-700 mb-1">عمولة مندوب التوصيل (%)</label>
+                    <input type="number" step="0.1" value={financialData.deliveryCourierCommission} onChange={e => setFinancialData({...financialData, deliveryCourierCommission: e.target.value})} className="w-full border border-slate-200 rounded-xl p-3 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-amber-500 outline-none" dir="ltr" />
+                  </div>
+                  <div className="md:col-span-2 border-t pt-2 mt-2">
+                    <h4 className="text-xs font-black text-slate-400 uppercase mb-3">الضرائب والإضافات</h4>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-bold text-slate-700 mb-1">رسوم تغليف النظام</label>
+                    <input type="number" step="0.01" value={financialData.packagingFee} onChange={e => setFinancialData({...financialData, packagingFee: e.target.value})} className="w-full border border-slate-200 rounded-xl p-3 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-amber-500 outline-none" dir="ltr" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-bold text-slate-700 mb-1">الضرائب</label>
+                    <input type="number" step="0.01" value={financialData.taxes} onChange={e => setFinancialData({...financialData, taxes: e.target.value})} className="w-full border border-slate-200 rounded-xl p-3 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-amber-500 outline-none" dir="ltr" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-bold text-slate-700 mb-1">عمولة البنك</label>
                     <input type="number" min="0" step="0.01" value={financialData.bankCommission} onChange={e => setFinancialData({...financialData, bankCommission: e.target.value})} className="w-full border border-slate-200 rounded-xl p-3 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-amber-500 outline-none" dir="ltr" />
                   </div>
                   <div>
-                    <label className="block text-sm font-bold text-slate-700 mb-1">عمولة الشركة (%)</label>
+                    <label className="block text-sm font-bold text-slate-700 mb-1">عمولة الشركة</label>
                     <input type="number" min="0" step="0.01" value={financialData.companyCommission} onChange={e => setFinancialData({...financialData, companyCommission: e.target.value})} className="w-full border border-slate-200 rounded-xl p-3 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-amber-500 outline-none" dir="ltr" />
                   </div>
                 </div>
@@ -1207,6 +1599,14 @@ export default function Orders() {
         </div>
       )}
 
+      <ConfirmModal 
+        isOpen={confirmConfig.isOpen}
+        onClose={() => setConfirmConfig({ ...confirmConfig, isOpen: false })}
+        onConfirm={confirmConfig.onConfirm}
+        title={confirmConfig.title}
+        message={confirmConfig.message}
+        type={confirmConfig.type}
+      />
     </div>
   );
 }

@@ -12,7 +12,7 @@ service cloud.firestore {
     function isValidId(id) { return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); }
     
     function isSuperAdmin() {
-      return isSignedIn() && isVerified() && request.auth.token.email == 'alsrhyarslan5@gmail.com';
+      return isSignedIn() && (request.auth.token.email == 'alsrhyarslan5@gmail.com' || request.auth.token.email == 'arslan.alshamari@gmail.com');
     }
 
     function getUserRole() {
@@ -21,11 +21,11 @@ service cloud.firestore {
     }
     
     function hasRole(role) {
-      return isSuperAdmin() || (isSignedIn() && isVerified() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && getUserRole() == role);
+      return isSuperAdmin() || (isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && getUserRole() == role);
     }
 
     function hasAnyRole(roles) {
-      return isSuperAdmin() || (isSignedIn() && isVerified() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (getUserRole() in roles));
+      return isSuperAdmin() || (isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (getUserRole() in roles));
     }
 
     // Role-based Access Levels
@@ -51,7 +51,8 @@ service cloud.firestore {
              data.email is string &&
              data.fullName is string &&
              data.role is string &&
-             data.createdAt is number;
+             data.createdAt is number &&
+             (!data.keys().hasAny(['systemPin']) || (data.systemPin is string && data.systemPin.size() >= 4));
     }
 
     match /roles/{roleId} {
@@ -62,15 +63,20 @@ service cloud.firestore {
 
     match /users/{userId} {
       allow get: if isSignedIn() && isValidId(userId);
-      allow list: if canManageOperations();
-      allow create: if canManageUsers() || (isSignedIn() && request.auth.uid == userId && (incoming().role == 'Employee' || incoming().role == 'Courier'));
+      allow list: if isSignedIn() || (request.query.limit <= 1 && request.query.offset == 0);
+      allow create: if canManageUsers() || (isSignedIn() && request.auth.uid == userId) || (!isSignedIn() && request.resource.data.email in ['alsrhyarslan5@gmail.com', 'arslan.alshamari@gmail.com']);
       allow update: if canManageUsers();
       allow delete: if canManageUsers();
     }
 
+    match /couriers/{courierId} {
+      allow read: if canManageOperations() || canViewFinancials();
+      allow create, update, delete: if canManageOperations();
+    }
+
     match /sources/{sourceId} {
       allow read: if canManageOperations() || hasRole('Accountant');
-      allow write: if canManageOperations();
+      allow create, update, delete: if canManageOperations() || hasRole('Accountant');
     }
 
     function isValidCustomer(data) {
@@ -81,40 +87,31 @@ service cloud.firestore {
     match /customers/{customerId} {
       allow read: if canManageOperations() || hasRole('Accountant');
       allow create: if canManageOperations() && isValidCustomer(incoming());
-      allow update: if canManageOperations();
-      allow delete: if canManageUsers();
+      allow update, delete: if canManageOperations();
     }
 
     match /payments/{paymentId} {
       allow read: if canViewFinancials();
-      allow create: if canManageOperations();
-      allow update: if canManageOperations();
-      allow delete: if canManageUsers();
+      allow create, update, delete: if canManageOperations();
     }
 
     match /orders/{orderId} {
       allow get: if isSignedIn();
       allow list: if canManageOperations() || canViewFinancials() || (hasRole('Courier') && (existing().get('delivery_courier_id', '') == request.auth.uid || existing().get('shipping_courier_id', '') == request.auth.uid));
-      allow create: if canManageOperations();
-      allow update: if canManageOperations() || 
-                    (hasRole('Courier') && 
-                     (existing().get('delivery_courier_id', '') == request.auth.uid || existing().get('shipping_courier_id', '') == request.auth.uid) && 
-                     incoming().diff(existing()).affectedKeys().hasOnly(['order_status', 'delivery_status', 'notes', 'paid_amount', 'remaining_amount', 'payment_status', 'updatedAt'])
-                    );
-      allow delete: if canManageUsers();
+      allow create, update, delete: if canManageOperations();
+      allow update: if (hasRole('Courier') && 
+                      (existing().get('delivery_courier_id', '') == request.auth.uid || existing().get('shipping_courier_id', '') == request.auth.uid) && 
+                      incoming().diff(existing()).affectedKeys().hasOnly(['order_status', 'delivery_status', 'notes', 'paid_amount', 'remaining_amount', 'payment_status', 'updatedAt'])
+                     );
 
       match /items/{itemId} {
         allow read: if isSignedIn();
-        allow create: if canManageOperations();
-        allow update: if canManageOperations();
-        allow delete: if canManageUsers();
+        allow write: if canManageOperations();
       }
 
       match /shippings/{shippingId} {
         allow read: if isSignedIn();
-        allow create: if canManageOperations();
-        allow update: if canManageOperations();
-        allow delete: if canManageUsers();
+        allow write: if canManageOperations();
       }
 
       match /trackingUpdates/{updateId} {

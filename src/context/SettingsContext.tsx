@@ -71,6 +71,9 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
         }
       }
       setLoading(false);
+    }, (error) => {
+      console.warn("Settings fetch warning (likely missing permissions):", error);
+      setLoading(false);
     });
 
     return unsub;
